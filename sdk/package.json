@@ -1,0 +1,27 @@
+{
+  "name": "@closetome/x402-sdk",
+  "version": "0.1.0",
+  "description": "Server SDK for integrating X402 payments into Express applications",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "example": "nodemon --exec ts-node examples/basic-server.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["x402", "payment", "middleware", "express", "solana", "base", "usdc"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.1",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.0",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

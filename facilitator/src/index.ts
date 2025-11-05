@@ -1,12 +1,15 @@
 import express, { Express, Request, Response } from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import path from 'path'
 import { getSupportedNetworks } from './routes/supported'
 import { verifyPayment } from './routes/verify'
 import { settlePayment } from './routes/settle'
 
 // Load environment variables
-dotenv.config()
+dotenv.config({
+  path: path.join(__dirname, '../.env'),
+})
 
 // Create Express app
 const app: Express = express()

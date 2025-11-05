@@ -1,5 +1,12 @@
+// Server-side exports
 export { X402Middleware } from './middleware'
 export { FacilitatorClient } from './facilitator-client'
+
+// Client-side exports
+export { X402Client } from './client'
+export type { X402ClientConfig, X402PaymentResponse } from './client'
+
+// Common types
 export * from './types'
 
 // Convenience function to create middleware

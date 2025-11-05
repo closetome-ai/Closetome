@@ -1,6 +1,6 @@
 import express from 'express'
 import dotenv from 'dotenv'
-import { createX402Middleware } from '../../sdk/src'
+import { createX402Middleware } from '../../solana-sdk/src'
 
 // Load environment variables
 dotenv.config()

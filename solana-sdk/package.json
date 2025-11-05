@@ -1,7 +1,7 @@
 {
-  "name": "@closetome/x402-sdk",
+  "name": "@closetome/solana-x402-sdk",
   "version": "0.1.0",
-  "description": "Server SDK for integrating X402 payments into Express applications",
+  "description": "Solana X402 payment SDK for both server and client applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -14,8 +14,11 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@solana/web3.js": "^1.95.8",
+    "@solana/spl-token": "^0.4.9",
     "axios": "^1.13.1",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "bs58": "^6.0.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.5",

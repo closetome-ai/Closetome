@@ -72,10 +72,25 @@ export interface AtomicSettleResponse {
   error?: string
 }
 
+// Simplified payment requirements for route configuration
+export interface RoutePaymentRequirements {
+  maxAmountRequired?: string
+  payTo?: string
+  description?: string
+  resource?: string
+  mimeType?: string
+  maxTimeoutSeconds?: number
+  asset?: string
+  extra?: {
+    feePayer?: string
+    [key: string]: any
+  }
+}
+
 // Route configuration for different paths
 export interface RouteConfig {
   path: string | RegExp
-  paymentRequirements: Partial<PaymentRequirements>
+  paymentRequirements: RoutePaymentRequirements
   autoSettle?: boolean
   atomicSettle?: boolean // Use atomic settlement with callback
   onPaymentVerified?: (payment: any, req: any) => Promise<void>

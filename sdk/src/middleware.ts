@@ -14,6 +14,8 @@ export class X402Middleware {
   private config: X402Config
   private facilitatorClient: FacilitatorClient
   private options: X402MiddlewareOptions
+  private extraCache?: Record<string, any>
+  private extraFetched: boolean = false
 
   constructor(config: X402Config, options: X402MiddlewareOptions = {}) {
     this.config = config
@@ -24,6 +26,30 @@ export class X402Middleware {
 
     // Initialize facilitator client
     this.facilitatorClient = new FacilitatorClient(config.facilitatorUrl, config.network)
+  }
+
+  /**
+   * Fetch extra fields from facilitator's supported endpoint
+   */
+  private async ensureExtraFields(): Promise<void> {
+    // Only fetch once
+    if (this.extraFetched) {
+      return
+    }
+
+    this.extraFetched = true
+
+    try {
+      const supported = await this.facilitatorClient.getSupported()
+      if (supported?.kinds) {
+        const networkInfo = supported.kinds.find((k: any) => k.network === this.config.network)
+        if (networkInfo?.extra) {
+          this.extraCache = networkInfo.extra
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch extra fields from facilitator:', error)
+    }
   }
 
   /**
@@ -44,7 +70,7 @@ export class X402Middleware {
 
       if (!paymentHeader) {
         // No payment provided, return 402 with route-specific requirements
-        return this.send402Response(res, routeConfig)
+        return await this.send402Response(res, routeConfig)
       }
 
       try {
@@ -63,6 +89,9 @@ export class X402Middleware {
           payment = paymentHeader
         }
 
+        // Ensure extra fields are fetched before building requirements
+        await this.ensureExtraFields()
+
         // Build payment requirements for this route
         const requirements = this.buildPaymentRequirements(routeConfig)
 
@@ -76,7 +105,7 @@ export class X402Middleware {
         const verifyResponse = await this.facilitatorClient.verify(verifyRequest)
 
         if (!verifyResponse.isValid) {
-          return this.send402Response(res, routeConfig, 'Payment verification failed')
+          return await this.send402Response(res, routeConfig, 'Payment verification failed')
         }
 
         // Call route-specific verification callback
@@ -97,7 +126,7 @@ export class X402Middleware {
           })
 
           if (!atomicResponse.success) {
-            return this.send402Response(res, routeConfig, 'Atomic settlement failed')
+            return await this.send402Response(res, routeConfig, 'Atomic settlement failed')
           }
 
           // Call route-specific settlement callback
@@ -123,7 +152,7 @@ export class X402Middleware {
           })
 
           if (!settleResponse.success) {
-            return this.send402Response(res, routeConfig, 'Payment settlement failed')
+            return await this.send402Response(res, routeConfig, 'Payment settlement failed')
           }
 
           // Call route-specific settlement callback
@@ -166,7 +195,7 @@ export class X402Middleware {
           return next()
         }
 
-        return this.send402Response(res, routeConfig, 'Payment processing error')
+        return await this.send402Response(res, routeConfig, 'Payment processing error')
       }
     }
   }
@@ -198,7 +227,10 @@ export class X402Middleware {
   /**
    * Send 402 Payment Required response with route-specific requirements
    */
-  private send402Response(res: Response, routeConfig: RouteConfig, error?: string): void {
+  private async send402Response(res: Response, routeConfig: RouteConfig, error?: string): Promise<void> {
+    // Ensure extra fields are fetched before building requirements
+    await this.ensureExtraFields()
+
     const requirements = this.buildPaymentRequirements(routeConfig)
 
     const response: X402Response = {
@@ -219,6 +251,17 @@ export class X402Middleware {
    * Build payment requirements for a specific route
    */
   private buildPaymentRequirements(routeConfig: RouteConfig): PaymentRequirements {
+    // Start with route's extra field if defined
+    let extra = routeConfig.paymentRequirements.extra || {}
+
+    // Merge with cached extra fields from facilitator
+    if (this.extraCache) {
+      extra = {
+        ...this.extraCache,  // Facilitator's extra fields (feePayer, computeUnitPrice, computeUnitLimit, etc.)
+        ...extra             // Route's extra fields override facilitator's if specified
+      }
+    }
+
     const requirements: PaymentRequirements = {
       scheme: 'exact',
       network: this.config.network,
@@ -229,7 +272,7 @@ export class X402Middleware {
       payTo: routeConfig.paymentRequirements.payTo || this.config.defaultPayTo || '',
       maxTimeoutSeconds: routeConfig.paymentRequirements.maxTimeoutSeconds || 300,
       asset: routeConfig.paymentRequirements.asset || this.getAssetAddress(),
-      extra: routeConfig.paymentRequirements.extra
+      extra: Object.keys(extra).length > 0 ? extra : undefined
     }
 
     return requirements
@@ -394,7 +437,10 @@ export class X402Middleware {
 /**
  * Helper function to create middleware with simple configuration
  */
-export function createX402Middleware(config: X402Config, options?: X402MiddlewareOptions): RequestHandler {
+export function createX402Middleware(
+  config: X402Config,
+  options?: X402MiddlewareOptions
+): RequestHandler<any, any, any, any> {
   const x402 = new X402Middleware(config, options)
   return x402.middleware()
 }

@@ -80,15 +80,15 @@ export class BaseService {
       }
 
       // Check recipient if specified in requirements
-      if (requirements.recipient && auth.to.toLowerCase() !== requirements.recipient.toLowerCase()) {
+      if (requirements.payTo && auth.to.toLowerCase() !== requirements.payTo.toLowerCase()) {
         console.error('Recipient mismatch')
         return false
       }
 
       // Check amount if specified in requirements
-      if (requirements.amount) {
+      if (requirements.maxAmountRequired) {
         const txValue = BigInt(auth.value)
-        const requiredAmount = BigInt(requirements.amount)
+        const requiredAmount = BigInt(requirements.maxAmountRequired)
         if (txValue < requiredAmount) {
           console.error('Insufficient amount')
           return false

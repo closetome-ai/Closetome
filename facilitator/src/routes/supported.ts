@@ -8,27 +8,36 @@ import { SolanaService } from '../services/solanaService'
  */
 export const getSupportedNetworks = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Get fee payer from Solana services
+    // Get fee payer and compute budget config from Solana services
     const solanaMainnetService = new SolanaService('https://api.mainnet-beta.solana.com')
     const solanaDevnetService = new SolanaService('https://api.devnet.solana.com')
 
     const feePayerMainnet = solanaMainnetService.getFeePayerPublicKey()
     const feePayerDevnet = solanaDevnetService.getFeePayerPublicKey()
 
-    // Build supported networks with dynamic fee payer
+    // Get compute budget config (same for both networks)
+    const computeBudgetConfig = solanaMainnetService.getComputeBudgetConfig()
+
+    // Build supported networks with dynamic fee payer and compute budget config
     const networks = []
 
     // Solana Devnet
     const solanaDevnet = { ...SUPPORTED_NETWORKS['solana-devnet'] }
-    if (feePayerDevnet) {
-      solanaDevnet.extra = { ...solanaDevnet.extra, feePayer: feePayerDevnet }
+    solanaDevnet.extra = {
+      ...solanaDevnet.extra,
+      ...(feePayerDevnet && { feePayer: feePayerDevnet }),
+      ...(computeBudgetConfig.unitPrice > 0 && { computeUnitPrice: computeBudgetConfig.unitPrice }),
+      ...(computeBudgetConfig.unitLimit > 0 && { computeUnitLimit: computeBudgetConfig.unitLimit })
     }
     networks.push(solanaDevnet)
 
     // Solana Mainnet
     const solanaMainnet = { ...SUPPORTED_NETWORKS['solana'] }
-    if (feePayerMainnet) {
-      solanaMainnet.extra = { ...solanaMainnet.extra, feePayer: feePayerMainnet }
+    solanaMainnet.extra = {
+      ...solanaMainnet.extra,
+      ...(feePayerMainnet && { feePayer: feePayerMainnet }),
+      ...(computeBudgetConfig.unitPrice > 0 && { computeUnitPrice: computeBudgetConfig.unitPrice }),
+      ...(computeBudgetConfig.unitLimit > 0 && { computeUnitLimit: computeBudgetConfig.unitLimit })
     }
     networks.push(solanaMainnet)
 

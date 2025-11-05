@@ -391,12 +391,6 @@ const x402Middleware = createX402Middleware(
 )
 ```
 
-## Examples
-
-See the [examples](./examples) directory for complete working examples:
-
-- `basic-server.ts` - Complete Express server with multiple payment tiers
-
 ## Development
 
 ```bash

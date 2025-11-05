@@ -25,7 +25,7 @@ export class X402Middleware {
     }
 
     // Initialize facilitator client
-    this.facilitatorClient = new FacilitatorClient(config.facilitatorUrl, config.network)
+    this.facilitatorClient = new FacilitatorClient(config.facilitatorUrl)
   }
 
   /**

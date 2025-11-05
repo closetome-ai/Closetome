@@ -6,15 +6,12 @@ import {
   SettleResponse,
   AtomicSettleRequest,
   AtomicSettleResponse,
-  Network
 } from './types'
 
 export class FacilitatorClient {
   private client: AxiosInstance
-  private network: Network
 
-  constructor(facilitatorUrl: string, network: Network) {
-    this.network = network
+  constructor(facilitatorUrl: string) {
     this.client = axios.create({
       baseURL: facilitatorUrl,
       timeout: 30000,

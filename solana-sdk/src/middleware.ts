@@ -1,12 +1,16 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express'
+import { Keypair } from '@solana/web3.js'
+import bs58 from 'bs58'
 import {
   X402Config,
   X402MiddlewareOptions,
   X402Response,
   PaymentRequirements,
   VerifyRequest,
+  AtomicSettleRequest,
   X402Version,
-  RouteConfig
+  RouteConfig,
+  RoutePaymentRequirements
 } from './types'
 import { FacilitatorClient } from './facilitator-client'
 
@@ -16,6 +20,7 @@ export class X402Middleware {
   private options: X402MiddlewareOptions
   private extraCache?: Record<string, any>
   private extraFetched: boolean = false
+  private serverKeypair?: Keypair // Solana Keypair for signing atomic transactions
 
   constructor(config: X402Config, options: X402MiddlewareOptions = {}) {
     this.config = config
@@ -26,6 +31,16 @@ export class X402Middleware {
 
     // Initialize facilitator client
     this.facilitatorClient = new FacilitatorClient(config.facilitatorUrl)
+
+    // Load server keypair if provided (for atomic transactions)
+    if (config.serverKeypair && (config.network === 'solana' || config.network === 'solana-devnet')) {
+      try {
+        this.serverKeypair = Keypair.fromSecretKey(bs58.decode(config.serverKeypair))
+      } catch (error) {
+        console.error('Failed to load server keypair:', error)
+        throw new Error('Invalid server keypair for atomic transactions')
+      }
+    }
   }
 
   /**
@@ -70,7 +85,7 @@ export class X402Middleware {
 
       if (!paymentHeader) {
         // No payment provided, return 402 with route-specific requirements
-        return await this.send402Response(res, routeConfig)
+        return await this.send402Response(res, routeConfig, undefined, req)
       }
 
       try {
@@ -93,89 +108,137 @@ export class X402Middleware {
         await this.ensureExtraFields()
 
         // Build payment requirements for this route
-        const requirements = this.buildPaymentRequirements(routeConfig)
+        const requirements = await this.buildPaymentRequirements(routeConfig, req)
 
-        // Verify payment
-        const verifyRequest: VerifyRequest = {
-          x402Version: 1,
-          paymentPayload: payment,
-          paymentRequirements: requirements
-        }
+        // Handle atomic transactions differently
+        if (routeConfig.atomic) {
+          // Atomic transaction flow
+          if (!this.serverKeypair) {
+            return await this.send402Response(res, routeConfig, 'Server keypair not configured for atomic transactions', req)
+          }
 
-        const verifyResponse = await this.facilitatorClient.verify(verifyRequest)
-
-        if (!verifyResponse.isValid) {
-          return await this.send402Response(res, routeConfig, 'Payment verification failed')
-        }
-
-        // Call route-specific verification callback
-        if (routeConfig.onPaymentVerified) {
-          await routeConfig.onPaymentVerified(payment, req)
-        }
-
-        // Handle different settlement modes
-        if (routeConfig.atomicSettle && routeConfig.onGenerateCallback) {
-          // Atomic settlement with callback
-          const callback = await routeConfig.onGenerateCallback(payment, req)
-
-          const atomicResponse = await this.facilitatorClient.atomicSettle({
-            x402Version: 1,
+          // Step 1: Verify atomic payment with facilitator
+          const atomicVerifyRequest = {
+            x402Version: 1 as const,
             paymentPayload: payment,
-            paymentRequirements: requirements,
-            callback: callback
-          })
-
-          if (!atomicResponse.success) {
-            return await this.send402Response(res, routeConfig, 'Atomic settlement failed')
+            paymentRequirements: requirements
           }
 
-          // Call route-specific settlement callback
-          if (routeConfig.onPaymentSettled && atomicResponse.settlementTxHash) {
-            await routeConfig.onPaymentSettled(payment, atomicResponse.settlementTxHash, req)
+          const atomicVerifyResponse = await this.facilitatorClient.atomicVerify(atomicVerifyRequest)
+
+          if (!atomicVerifyResponse.isValid) {
+            return await this.send402Response(res, routeConfig, 'Atomic payment verification failed', req)
           }
 
-          // Add transaction info to request for downstream use
-          (req as any).x402 = {
-            settlementTxHash: atomicResponse.settlementTxHash,
-            callbackTxHash: atomicResponse.callbackTxHash,
-            payment: payment,
-            route: req.path,
-            settled: true,
-            atomic: true
+          // Step 2: Server signs the transaction (for callback instructions)
+          try {
+            const { VersionedTransaction } = require('@solana/web3.js')
+            const txBuffer = Buffer.from(payment.transaction, 'base64')
+            const transaction = VersionedTransaction.deserialize(txBuffer)
+            transaction.sign([this.serverKeypair])
+            payment.transaction = Buffer.from(transaction.serialize()).toString('base64')
+          } catch (error) {
+            console.error('Failed to sign atomic transaction:', error)
+            return await this.send402Response(res, routeConfig, 'Failed to sign atomic transaction', req)
           }
-        } else if (routeConfig.autoSettle) {
-          // Regular auto-settle
-          const settleResponse = await this.facilitatorClient.settle({
+
+          // Call route-specific verification callback
+          if (routeConfig.onPaymentVerified) {
+            await routeConfig.onPaymentVerified(payment, req)
+          }
+
+          // Step 3: Settle if autoSettle is enabled
+          if (routeConfig.autoSettle) {
+            const atomicSettleRequest: AtomicSettleRequest = {
+              x402Version: 1,
+              paymentPayload: payment,
+              paymentRequirements: requirements,
+              callback: { type: 'solana', data: null } // Transaction already signed by server
+            }
+
+            const atomicSettleResponse = await this.facilitatorClient.atomicSettle(atomicSettleRequest)
+
+            if (!atomicSettleResponse.success) {
+              return await this.send402Response(res, routeConfig, 'Atomic settlement failed', req)
+            }
+
+            // Call route-specific settlement callback
+            if (routeConfig.onPaymentSettled && atomicSettleResponse.settlementTxHash) {
+              await routeConfig.onPaymentSettled(payment, atomicSettleResponse.settlementTxHash, req)
+            }
+
+            // Add transaction info to request for downstream use
+            (req as any).x402 = {
+              settlementTxHash: atomicSettleResponse.settlementTxHash,
+              callbackTxHash: atomicSettleResponse.callbackTxHash,
+              payment: payment,
+              route: req.path,
+              settled: true,
+              atomic: true
+            }
+          } else {
+            // Just verify, no settlement
+            (req as any).x402 = {
+              payment: payment,
+              route: req.path,
+              verified: true,
+              settled: false,
+              atomic: true
+            }
+          }
+        } else {
+          // Regular (non-atomic) transaction flow
+          const verifyRequest: VerifyRequest = {
             x402Version: 1,
             paymentPayload: payment,
             paymentRequirements: requirements
-          })
-
-          if (!settleResponse.success) {
-            return await this.send402Response(res, routeConfig, 'Payment settlement failed')
           }
 
-          // Call route-specific settlement callback
-          if (routeConfig.onPaymentSettled && settleResponse.transactionHash) {
-            await routeConfig.onPaymentSettled(payment, settleResponse.transactionHash, req)
+          const verifyResponse = await this.facilitatorClient.verify(verifyRequest)
+
+          if (!verifyResponse.isValid) {
+            return await this.send402Response(res, routeConfig, 'Payment verification failed', req)
           }
 
-          // Add transaction info to request for downstream use
-          (req as any).x402 = {
-            transactionHash: settleResponse.transactionHash,
-            payment: payment,
-            route: req.path,
-            settled: true,
-            atomic: false
+          // Call route-specific verification callback
+          if (routeConfig.onPaymentVerified) {
+            await routeConfig.onPaymentVerified(payment, req)
           }
-        } else {
-          // Just verify, no settlement
-          (req as any).x402 = {
-            payment: payment,
-            route: req.path,
-            verified: true,
-            settled: false,
-            atomic: false
+
+          if (routeConfig.autoSettle) {
+            // Regular auto-settle
+            const settleResponse = await this.facilitatorClient.settle({
+              x402Version: 1,
+              paymentPayload: payment,
+              paymentRequirements: requirements
+            })
+
+            if (!settleResponse.success) {
+              return await this.send402Response(res, routeConfig, 'Payment settlement failed', req)
+            }
+
+            // Call route-specific settlement callback
+            if (routeConfig.onPaymentSettled && settleResponse.transactionHash) {
+              await routeConfig.onPaymentSettled(payment, settleResponse.transactionHash, req)
+            }
+
+            // Add transaction info to request for downstream use
+            (req as any).x402 = {
+              transactionHash: settleResponse.transactionHash,
+              payment: payment,
+              route: req.path,
+              settled: true,
+              atomic: false
+            }
+          } else {
+            // Just verify, no settlement
+            (req as any).x402 = {
+              payment: payment,
+              route: req.path,
+              verified: true,
+              settled: false,
+              atomic: false
+            }
           }
         }
 
@@ -195,7 +258,7 @@ export class X402Middleware {
           return next()
         }
 
-        return await this.send402Response(res, routeConfig, 'Payment processing error')
+        return await this.send402Response(res, routeConfig, 'Payment processing error', req)
       }
     }
   }
@@ -227,11 +290,11 @@ export class X402Middleware {
   /**
    * Send 402 Payment Required response with route-specific requirements
    */
-  private async send402Response(res: Response, routeConfig: RouteConfig, error?: string): Promise<void> {
+  private async send402Response(res: Response, routeConfig: RouteConfig, error?: string, req?: Request): Promise<void> {
     // Ensure extra fields are fetched before building requirements
     await this.ensureExtraFields()
 
-    const requirements = this.buildPaymentRequirements(routeConfig)
+    const requirements = await this.buildPaymentRequirements(routeConfig, req)
 
     const response: X402Response = {
       x402Version: 1,
@@ -249,10 +312,21 @@ export class X402Middleware {
 
   /**
    * Build payment requirements for a specific route
+   * Supports both static and dynamic requirements
    */
-  private buildPaymentRequirements(routeConfig: RouteConfig): PaymentRequirements {
+  private async buildPaymentRequirements(routeConfig: RouteConfig, req?: Request): Promise<PaymentRequirements> {
+    // Check if paymentRequirements is a function (dynamic)
+    let routeReqs: RoutePaymentRequirements
+    if (typeof routeConfig.paymentRequirements === 'function') {
+      // Dynamic requirements based on request
+      routeReqs = await routeConfig.paymentRequirements(req)
+    } else {
+      // Static requirements
+      routeReqs = routeConfig.paymentRequirements
+    }
+
     // Start with route's extra field if defined
-    let extra = routeConfig.paymentRequirements.extra || {}
+    let extra = routeReqs.extra || {}
 
     // Merge with cached extra fields from facilitator
     if (this.extraCache) {
@@ -265,13 +339,14 @@ export class X402Middleware {
     const requirements: PaymentRequirements = {
       scheme: 'exact',
       network: this.config.network,
-      maxAmountRequired: routeConfig.paymentRequirements.maxAmountRequired || '1000000',
-      resource: routeConfig.paymentRequirements.resource || routeConfig.path.toString(),
-      description: routeConfig.paymentRequirements.description || 'API Access',
-      mimeType: routeConfig.paymentRequirements.mimeType || 'application/json',
-      payTo: routeConfig.paymentRequirements.payTo || this.config.defaultPayTo || '',
-      maxTimeoutSeconds: routeConfig.paymentRequirements.maxTimeoutSeconds || 300,
-      asset: routeConfig.paymentRequirements.asset || this.getAssetAddress(),
+      maxAmountRequired: routeReqs.maxAmountRequired || '1000000',
+      resource: routeReqs.resource || routeConfig.path.toString(),
+      description: routeReqs.description || 'API Access',
+      mimeType: routeReqs.mimeType || 'application/json',
+      payTo: routeReqs.payTo || this.config.defaultPayTo || '',
+      maxTimeoutSeconds: routeReqs.maxTimeoutSeconds || 300,
+      asset: routeReqs.asset || this.getAssetAddress(),
+      outputSchema: routeReqs.outputSchema,
       extra: Object.keys(extra).length > 0 ? extra : undefined
     }
 
@@ -299,13 +374,13 @@ export class X402Middleware {
   /**
    * Manually verify payment for a specific route
    */
-  async verifyPayment(paymentPayload: any, routePath: string): Promise<boolean> {
+  async verifyPayment(paymentPayload: any, routePath: string, req?: any): Promise<boolean> {
     const routeConfig = this.findRouteConfig(routePath)
     if (!routeConfig) {
       throw new Error(`No route configured for path: ${routePath}`)
     }
 
-    const requirements = this.buildPaymentRequirements(routeConfig)
+    const requirements = await this.buildPaymentRequirements(routeConfig, req)
 
     const request: VerifyRequest = {
       x402Version: 1,
@@ -320,13 +395,13 @@ export class X402Middleware {
   /**
    * Manually settle payment for a specific route
    */
-  async settlePayment(paymentPayload: any, routePath: string): Promise<{ success: boolean; transactionHash?: string }> {
+  async settlePayment(paymentPayload: any, routePath: string, req?: any): Promise<{ success: boolean; transactionHash?: string }> {
     const routeConfig = this.findRouteConfig(routePath)
     if (!routeConfig) {
       throw new Error(`No route configured for path: ${routePath}`)
     }
 
-    const requirements = this.buildPaymentRequirements(routeConfig)
+    const requirements = await this.buildPaymentRequirements(routeConfig, req)
 
     const request = {
       x402Version: 1 as X402Version,
@@ -345,7 +420,7 @@ export class X402Middleware {
   /**
    * Manual verify and settle for a specific route (non-atomic)
    */
-  async verifyAndSettle(paymentPayload: any, routePath: string): Promise<{
+  async verifyAndSettle(paymentPayload: any, routePath: string, req?: any): Promise<{
     verified: boolean
     settled: boolean
     transactionHash?: string
@@ -356,7 +431,7 @@ export class X402Middleware {
       throw new Error(`No route configured for path: ${routePath}`)
     }
 
-    const requirements = this.buildPaymentRequirements(routeConfig)
+    const requirements = await this.buildPaymentRequirements(routeConfig, req)
 
     const request: VerifyRequest = {
       x402Version: 1,
@@ -374,7 +449,8 @@ export class X402Middleware {
   async atomicSettle(
     paymentPayload: any,
     routePath: string,
-    callbackGenerator?: (payment: any) => Promise<any>
+    callbackGenerator?: (payment: any) => Promise<any>,
+    req?: any
   ): Promise<{
     success: boolean
     settlementTxHash?: string
@@ -392,7 +468,7 @@ export class X402Middleware {
       throw new Error('No callback generator provided for atomic settlement')
     }
 
-    const requirements = this.buildPaymentRequirements(routeConfig)
+    const requirements = await this.buildPaymentRequirements(routeConfig, req)
 
     // Generate callback transaction
     const callback = await generateCallback(paymentPayload, { path: routePath })

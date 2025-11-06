@@ -4,6 +4,8 @@ import {
   VerifyResponse,
   SettleRequest,
   SettleResponse,
+  AtomicVerifyRequest,
+  AtomicVerifyResponse,
   AtomicSettleRequest,
   AtomicSettleResponse,
 } from './types'
@@ -98,29 +100,34 @@ export class FacilitatorClient {
   }
 
   /**
-   * Atomic settle with callback transaction
-   * Settles payment and executes callback in a single atomic operation
-   * The callback transaction is executed atomically with the settlement
-   *
-   * @param request - Atomic settle request including payment and callback transaction
-   * @returns Response with settlement and callback transaction hashes
+   * Verify an atomic payment transaction
+   * The payment includes callback instructions that will be executed atomically
    */
-  async atomicSettle(request: AtomicSettleRequest): Promise<AtomicSettleResponse> {
+  async atomicVerify(request: AtomicVerifyRequest): Promise<AtomicVerifyResponse> {
     try {
-      // TODO: Update endpoint path when facilitator implements atomic settle
-      const response = await this.client.post<AtomicSettleResponse>('/atomic-settle', request)
+      const response = await this.client.post<AtomicVerifyResponse>('/atomic/verify', request)
       return response.data
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
         return error.response.data
       }
+      throw error
+    }
+  }
 
-      // Facilitator doesn't support atomic settle yet
-      console.warn('Atomic settle not yet supported by facilitator')
-      return {
-        success: false,
-        error: 'Atomic settle not yet implemented in facilitator'
+  /**
+   * Settle an atomic payment transaction
+   * The facilitator will sign and submit the transaction
+   */
+  async atomicSettle(request: AtomicSettleRequest): Promise<AtomicSettleResponse> {
+    try {
+      const response = await this.client.post<AtomicSettleResponse>('/atomic/settle', request)
+      return response.data
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        return error.response.data
       }
+      throw error
     }
   }
 }

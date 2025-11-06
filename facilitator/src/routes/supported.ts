@@ -27,7 +27,8 @@ export const getSupportedNetworks = async (req: Request, res: Response): Promise
       ...solanaDevnet.extra,
       ...(feePayerDevnet && { feePayer: feePayerDevnet }),
       ...(computeBudgetConfig.unitPrice > 0 && { computeUnitPrice: computeBudgetConfig.unitPrice }),
-      ...(computeBudgetConfig.unitLimit > 0 && { computeUnitLimit: computeBudgetConfig.unitLimit })
+      ...(computeBudgetConfig.unitLimit > 0 && { computeUnitLimit: computeBudgetConfig.unitLimit }),
+      ...(computeBudgetConfig.maxUnitLimitAtomic > 0 && { maxComputeUnitLimitAtomic: computeBudgetConfig.maxUnitLimitAtomic })
     }
     networks.push(solanaDevnet)
 
@@ -37,7 +38,8 @@ export const getSupportedNetworks = async (req: Request, res: Response): Promise
       ...solanaMainnet.extra,
       ...(feePayerMainnet && { feePayer: feePayerMainnet }),
       ...(computeBudgetConfig.unitPrice > 0 && { computeUnitPrice: computeBudgetConfig.unitPrice }),
-      ...(computeBudgetConfig.unitLimit > 0 && { computeUnitLimit: computeBudgetConfig.unitLimit })
+      ...(computeBudgetConfig.unitLimit > 0 && { computeUnitLimit: computeBudgetConfig.unitLimit }),
+      ...(computeBudgetConfig.maxUnitLimitAtomic > 0 && { maxComputeUnitLimitAtomic: computeBudgetConfig.maxUnitLimitAtomic })
     }
     networks.push(solanaMainnet)
 

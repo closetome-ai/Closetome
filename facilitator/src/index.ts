@@ -5,6 +5,8 @@ import path from 'path'
 import { getSupportedNetworks } from './routes/supported'
 import { verifyPayment } from './routes/verify'
 import { settlePayment } from './routes/settle'
+import { verifyAtomicPayment } from './routes/atomicVerify'
+import { settleAtomicPayment } from './routes/atomicSettle'
 
 // Load environment variables
 dotenv.config({
@@ -31,6 +33,10 @@ app.get('/supported', getSupportedNetworks)
 app.post('/verify', verifyPayment)
 app.post('/settle', settlePayment)
 
+// Atomic transaction routes
+app.post('/atomic/verify', verifyAtomicPayment)
+app.post('/atomic/settle', settleAtomicPayment)
+
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
@@ -49,6 +55,8 @@ app.get('/', (req: Request, res: Response) => {
       'GET /supported': 'Get list of supported payment networks',
       'POST /verify': 'Verify a payment payload',
       'POST /settle': 'Settle (submit) a payment to blockchain',
+      'POST /atomic/verify': 'Verify an atomic payment with callback instructions',
+      'POST /atomic/settle': 'Settle (submit) an atomic payment to blockchain',
       'GET /health': 'Health check endpoint'
     }
   })
@@ -79,5 +87,7 @@ app.listen(PORT, () => {
   console.log(`  GET  http://localhost:${PORT}/supported`)
   console.log(`  POST http://localhost:${PORT}/verify`)
   console.log(`  POST http://localhost:${PORT}/settle`)
+  console.log(`  POST http://localhost:${PORT}/atomic/verify`)
+  console.log(`  POST http://localhost:${PORT}/atomic/settle`)
   console.log(`  GET  http://localhost:${PORT}/health`)
 })

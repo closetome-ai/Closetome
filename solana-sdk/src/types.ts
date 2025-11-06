@@ -4,6 +4,43 @@ export type Network = 'solana' | 'solana-devnet' | 'base' | 'base-sepolia'
 export type Scheme = 'exact'
 export type X402Version = 1
 
+export interface SerializedInstruction {
+  programId: string
+  keys: Array<{
+    pubkey: string
+    isSigner: boolean
+    isWritable: boolean
+  }>
+  data: string // Base64 encoded
+}
+
+// Output schema for documenting API endpoints
+export interface PropertySchema {
+  type: string
+  description?: string
+  required?: boolean
+  enum?: string[]
+  items?: PropertySchema
+  properties?: Record<string, PropertySchema>
+}
+
+export interface HttpInputSchema {
+  type: 'http'
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+  discoverable?: boolean
+  properties?: Record<string, PropertySchema>
+}
+
+export interface HttpOutputSchema {
+  type: 'http'
+  properties?: Record<string, PropertySchema>
+}
+
+export interface OutputSchema {
+  input: HttpInputSchema
+  output: HttpOutputSchema
+}
+
 export interface PaymentRequirements {
   scheme: Scheme
   network: Network
@@ -14,8 +51,12 @@ export interface PaymentRequirements {
   payTo: string
   maxTimeoutSeconds: number
   asset: string
+  outputSchema?: OutputSchema
   extra?: {
     feePayer?: string
+    computeUnitPrice?: number
+    computeUnitLimit?: number
+    callbackInstructions?: SerializedInstruction[]
     [key: string]: any
   }
 }
@@ -34,6 +75,18 @@ export interface VerifyRequest {
 }
 
 export interface VerifyResponse {
+  isValid: boolean
+  error?: string
+}
+
+// Atomic verify request - for verifying atomic transactions
+export interface AtomicVerifyRequest {
+  x402Version: X402Version
+  paymentPayload: any
+  paymentRequirements: PaymentRequirements
+}
+
+export interface AtomicVerifyResponse {
   isValid: boolean
   error?: string
 }
@@ -81,8 +134,12 @@ export interface RoutePaymentRequirements {
   mimeType?: string
   maxTimeoutSeconds?: number
   asset?: string
+  outputSchema?: OutputSchema
   extra?: {
     feePayer?: string
+    computeUnitPrice?: number
+    computeUnitLimit?: number
+    callbackInstructions?: SerializedInstruction[]
     [key: string]: any
   }
 }
@@ -90,9 +147,10 @@ export interface RoutePaymentRequirements {
 // Route configuration for different paths
 export interface RouteConfig {
   path: string | RegExp
-  paymentRequirements: RoutePaymentRequirements
+  // Can be static requirements or dynamic generator
+  paymentRequirements: RoutePaymentRequirements | ((req: any) => Promise<RoutePaymentRequirements> | RoutePaymentRequirements)
+  atomic?: boolean // Use atomic verification and settlement (requires serverKeypair in X402Config)
   autoSettle?: boolean
-  atomicSettle?: boolean // Use atomic settlement with callback
   onPaymentVerified?: (payment: any, req: any) => Promise<void>
   onPaymentSettled?: (payment: any, txHash: string, req: any) => Promise<void>
   // For atomic operations: generate callback transaction/instructions
@@ -105,6 +163,7 @@ export interface X402Config {
   facilitatorUrl: string
   routes: RouteConfig[]
   defaultPayTo?: string // Optional default payTo address for all routes
+  serverKeypair?: string // Base58 encoded Keypair for signing atomic transactions (Solana only)
   onPaymentFailed?: (error: Error, req: any) => Promise<void>
 }
 

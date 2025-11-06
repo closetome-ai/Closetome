@@ -4,7 +4,8 @@ import {
   PublicKey,
   VersionedTransaction,
   TransactionMessage,
-  ComputeBudgetProgram
+  ComputeBudgetProgram,
+  TransactionInstruction
 } from '@solana/web3.js'
 import {
   TOKEN_PROGRAM_ID,
@@ -14,7 +15,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from '@solana/spl-token'
 import axios from 'axios'
-import { PaymentRequirements } from './types'
+import { PaymentRequirements, SerializedInstruction } from './types'
 
 const USDC_MINTS: Record<string, string> = {
   'solana': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -191,6 +192,203 @@ export class X402Client {
 
         // Create payment transaction
         const paymentTx = await this.createPaymentTransaction(requirements)
+
+        // Create payment payload
+        const paymentPayload = { transaction: paymentTx }
+        const paymentHeader = Buffer.from(JSON.stringify(paymentPayload)).toString('base64')
+
+        // Retry with payment header
+        const response = await axios({
+          url: `${this.serverUrl}${endpoint}`,
+          method: options.method || 'GET',
+          data: options.data,
+          headers: {
+            ...options.headers,
+            'X-X402-Payment': paymentHeader
+          }
+        })
+
+        return response.data
+      }
+
+      throw error
+    }
+  }
+
+  /**
+   * Validate callback instructions to ensure they don't contain user's wallet as account
+   */
+  private validateCallbackInstructions(callbackInstructions: SerializedInstruction[]): void {
+    const userWallet = this.payer.publicKey.toBase58()
+
+    for (const instruction of callbackInstructions) {
+      for (const key of instruction.keys) {
+        if (key.pubkey === userWallet) {
+          throw new Error(
+            `Security violation: Callback instruction contains user's wallet as an account. ` +
+            `This could allow the server to access your funds. Transaction rejected.`
+          )
+        }
+      }
+    }
+  }
+
+  /**
+   * Deserialize callback instructions from server
+   */
+  private deserializeCallbackInstructions(serializedInstructions: SerializedInstruction[]): TransactionInstruction[] {
+    return serializedInstructions.map(ix => new TransactionInstruction({
+      programId: new PublicKey(ix.programId),
+      keys: ix.keys.map(key => ({
+        pubkey: new PublicKey(key.pubkey),
+        isSigner: key.isSigner,
+        isWritable: key.isWritable
+      })),
+      data: Buffer.from(ix.data, 'base64')
+    }))
+  }
+
+  /**
+   * Create an atomic payment transaction with callback instructions
+   */
+  async createAtomicPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+    if (!requirements.extra?.callbackInstructions) {
+      throw new Error('No callback instructions provided for atomic transaction')
+    }
+
+    // Validate callback instructions for security
+    this.validateCallbackInstructions(requirements.extra.callbackInstructions)
+
+    // Set up connection based on network
+    const rpcUrl = requirements.network === 'solana'
+      ? 'https://api.mainnet-beta.solana.com'
+      : 'https://api.devnet.solana.com'
+
+    this.connection = new Connection(rpcUrl, 'confirmed')
+
+    // Get USDC mint for the network
+    const usdcMint = new PublicKey(requirements.asset || USDC_MINTS[requirements.network])
+    const recipientPubkey = new PublicKey(requirements.payTo!)
+    const amount = requirements.maxAmountRequired!
+
+    // Get token accounts
+    const payerATA = await getAssociatedTokenAddress(
+      usdcMint,
+      this.payer.publicKey
+    )
+
+    const recipientATA = await getAssociatedTokenAddress(
+      usdcMint,
+      recipientPubkey
+    )
+
+    // Check if recipient ATA exists
+    const recipientATAInfo = await this.connection.getAccountInfo(recipientATA)
+    const needsATACreation = !recipientATAInfo
+
+    // Determine fee payer
+    let feePayer = this.payer.publicKey
+    if (requirements.extra?.feePayer) {
+      feePayer = new PublicKey(requirements.extra.feePayer)
+    }
+
+    // Get latest blockhash
+    const { blockhash } = await this.connection.getLatestBlockhash()
+
+    // Create transaction instructions
+    const instructions: TransactionInstruction[] = []
+
+    // Add compute budget instructions (REQUIRED)
+    const computeLimit = requirements.extra?.computeUnitLimit || (needsATACreation ? 40000 : 200000)
+    const computePrice = requirements.extra?.computeUnitPrice || 1
+
+    instructions.push(
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computePrice })
+    )
+    instructions.push(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: computeLimit })
+    )
+
+    // Add ATA creation instruction if needed
+    if (needsATACreation) {
+      instructions.push(
+        createAssociatedTokenAccountInstruction(
+          feePayer,
+          recipientATA,
+          recipientPubkey,
+          usdcMint,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      )
+    }
+
+    // Add USDC transfer instruction (REQUIRED)
+    instructions.push(
+      createTransferInstruction(
+        payerATA,
+        recipientATA,
+        this.payer.publicKey,
+        BigInt(amount)
+      )
+    )
+
+    // Add server callback instructions
+    const callbackInstructions = this.deserializeCallbackInstructions(
+      requirements.extra.callbackInstructions
+    )
+    instructions.push(...callbackInstructions)
+
+    // Create versioned transaction
+    const messageV0 = new TransactionMessage({
+      payerKey: feePayer,
+      recentBlockhash: blockhash,
+      instructions
+    }).compileToV0Message()
+
+    const transaction = new VersionedTransaction(messageV0)
+
+    // Sign with payer (only user signs, server will sign later)
+    transaction.sign([this.payer])
+
+    // Serialize to base64
+    return Buffer.from(transaction.serialize()).toString('base64')
+  }
+
+  /**
+   * Make a request with atomic payment (includes callback instructions)
+   */
+  async requestWithAtomicPayment(endpoint: string, options: {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+    data?: any
+    headers?: Record<string, string>
+  } = {}): Promise<any> {
+    // Try request without payment first
+    try {
+      const response = await axios({
+        url: `${this.serverUrl}${endpoint}`,
+        method: options.method || 'GET',
+        data: options.data,
+        headers: options.headers
+      })
+      return response.data
+    } catch (error: any) {
+      // If 402, get requirements and pay
+      if (error.response?.status === 402) {
+        const paymentResponse: X402PaymentResponse = error.response.data
+        if (!paymentResponse.accepts || paymentResponse.accepts.length === 0) {
+          throw new Error('No payment requirements provided')
+        }
+
+        const requirements = paymentResponse.accepts[0]
+
+        // Check if atomic transaction is required
+        if (!requirements.extra?.callbackInstructions) {
+          throw new Error('Endpoint requires atomic payment but no callback instructions provided')
+        }
+
+        // Create atomic payment transaction
+        const paymentTx = await this.createAtomicPaymentTransaction(requirements)
 
         // Create payment payload
         const paymentPayload = { transaction: paymentTx }

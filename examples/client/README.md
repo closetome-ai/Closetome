@@ -4,12 +4,12 @@ Example clients demonstrating Standard and Atomic X402 payment flows.
 
 ## Files
 
-- \`client.ts\` - Standard X402 payment flow
-- \`atomic-client.ts\` - Interactive atomic payment flow
+- `client.ts` - Standard X402 payment flow
+- `atomic-client.ts` - Interactive atomic payment flow
 
 ## Quick Start
 
-\`\`\`bash
+```bash
 yarn install
 
 # Standard flow
@@ -17,16 +17,16 @@ node client.ts
 
 # Atomic flow (interactive)
 node atomic-client.ts
-\`\`\`
+```
 
 ## Configuration
 
-Create \`.env\` file:
+Create `.env` file:
 
-\`\`\`
+```
 SERVER_URL=http://localhost:4000
 PAYER_SECRET_KEY=your_payer_keypair_base58
-\`\`\`
+```
 
 ## Standard Client (client.ts)
 
@@ -45,7 +45,7 @@ Interactive schema-driven flow:
 
 ### Interactive Features
 
-- Automatic parameter discovery from \`outputSchema\`
+- Automatic parameter discovery from `outputSchema`
 - Type validation (string, number, boolean)
 - Enum option validation
 - Required field checking

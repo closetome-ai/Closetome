@@ -4,9 +4,9 @@ TypeScript SDK for integrating X402 payments into your applications, supporting 
 
 ## Installation
 
-\`\`\`bash
+```bash
 yarn add @closetome/x402-solana-sdk
-\`\`\`
+```
 
 ## Features
 
@@ -21,7 +21,7 @@ yarn add @closetome/x402-solana-sdk
 
 ### Standard X402
 
-\`\`\`typescript
+```typescript
 import { createX402Middleware } from '@closetome/x402-solana-sdk'
 
 const middleware = createX402Middleware({
@@ -38,11 +38,11 @@ const middleware = createX402Middleware({
 })
 
 app.use(middleware)
-\`\`\`
+```
 
 ### Atomic X402 (Type-Safe)
 
-\`\`\`typescript
+```typescript
 import { defineRoute, createTypedRoute, prop } from '@closetome/x402-solana-sdk'
 
 interface Input {
@@ -76,11 +76,11 @@ const middleware = createX402Middleware({
   routes: [createTypedRoute(route)],
   serverKeypair: SERVER_SECRET_KEY // Required for atomic
 })
-\`\`\`
+```
 
 ## Client Usage
 
-\`\`\`typescript
+```typescript
 import { X402Client } from '@closetome/x402-solana-sdk'
 
 const client = new X402Client({
@@ -94,28 +94,28 @@ const result = await client.requestWithPayment('/api/protected')
 
 // Atomic payment
 const result = await client.requestWithAtomicPayment('/api/atomic?amount=2000000')
-\`\`\`
+```
 
 ## API Reference
 
 ### Server
 
-- \`createX402Middleware(config)\` - Create Express middleware
-- \`defineRoute<TInput, TOutput>(definition)\` - Define type-safe route
-- \`createTypedRoute(definition)\` - Convert to RouteConfig
-- \`prop.string(desc, options)\` - Schema property builders
-- \`prop.number(desc)\`
-- \`prop.boolean(desc)\`
-- \`prop.object(props, desc)\`
+- `createX402Middleware(config)` - Create Express middleware
+- `defineRoute<TInput, TOutput>(definition)` - Define type-safe route
+- `createTypedRoute(definition)` - Convert to RouteConfig
+- `prop.string(desc, options)` - Schema property builders
+- `prop.number(desc)`
+- `prop.boolean(desc)`
+- `prop.object(props, desc)`
 
 ### Client
 
-- \`X402Client\` - Main client class
-  - \`getPaymentRequirements(endpoint)\` - Get 402 response
-  - \`createPaymentTransaction(requirements)\` - Create payment tx
-  - \`createAtomicPaymentTransaction(requirements)\` - Create atomic tx
-  - \`requestWithPayment(endpoint, options)\` - Standard flow
-  - \`requestWithAtomicPayment(endpoint, options)\` - Atomic flow
+- `X402Client` - Main client class
+  - `getPaymentRequirements(endpoint)` - Get 402 response
+  - `createPaymentTransaction(requirements)` - Create payment tx
+  - `createAtomicPaymentTransaction(requirements)` - Create atomic tx
+  - `requestWithPayment(endpoint, options)` - Standard flow
+  - `requestWithAtomicPayment(endpoint, options)` - Atomic flow
 
 ## License
 

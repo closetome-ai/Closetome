@@ -13,12 +13,12 @@ The facilitator service handles payment verification and settlement for the X402
 
 ## Quick Start
 
-\`\`\`bash
+```bash
 yarn install
 yarn start
-\`\`\`
+```
 
-The service will start on \`http://localhost:3010\`
+The service will start on `http://localhost:3010`
 
 ## API Endpoints
 
@@ -39,7 +39,7 @@ Settles an atomic payment transaction
 
 ## Configuration
 
-Edit \`src/config.ts\` to configure:
+Edit `src/config.ts` to configure:
 - Networks (Solana mainnet/devnet, Base)
 - RPC endpoints
 - Compute limits

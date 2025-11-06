@@ -1,134 +1,58 @@
-# X402 Facilitator Server
+# X402 Facilitator - Payment Verification Service
 
-A facilitator server implementation for the X402 payment protocol, supporting Solana and Base networks.
+The facilitator service handles payment verification and settlement for the X402 protocol, supporting both Standard and Atomic payment flows.
 
 ## Features
 
-- **GET /supported** - Returns the list of supported payment networks
-- **POST /verify** - Verifies a payment payload against requirements
-- **POST /settle** - Settles (submits) a payment to the blockchain
+- ✅ Standard payment verification and settlement
+- ✅ Atomic transaction verification with callback instructions
+- ✅ Compute budget validation
+- ✅ On-chain account verification
+- ✅ Position-based instruction validation
+- ✅ Support for Solana (mainnet & devnet)
 
-## Supported Networks
+## Quick Start
 
-- Solana (mainnet and devnet)
-- Base (mainnet and sepolia testnet)
-
-## Installation
-
-```bash
-# Install dependencies
+\`\`\`bash
 yarn install
-
-# Build the project
-yarn build
-```
-
-## Running the Server
-
-```bash
-# Development mode with hot reload
-yarn dev
-
-# Production mode
 yarn start
-```
+\`\`\`
 
-## Environment Variables
-
-Create a `.env` file based on `.env.example`:
-
-```bash
-PORT=3000
-NODE_ENV=development
-```
+The service will start on \`http://localhost:3010\`
 
 ## API Endpoints
 
 ### GET /supported
-
-Returns the list of supported payment networks.
-
-**Response:**
-```json
-{
-  "kinds": [
-    {
-      "x402Version": 1,
-      "scheme": "exact",
-      "network": "solana-devnet",
-      "extra": {
-        "feePayer": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"
-      }
-    },
-    // ... other networks
-  ]
-}
-```
+Returns supported payment methods and extra configuration
 
 ### POST /verify
-
-Verifies a payment payload against requirements.
-
-**Request:**
-```json
-{
-  "x402Version": 1,
-  "paymentPayload": {},
-  "paymentRequirements": {
-    "x402Version": 1,
-    "scheme": "exact",
-    "network": "solana",
-    "amount": "1000000",
-    "recipient": "..."
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "isValid": true
-}
-```
+Verifies a standard payment transaction
 
 ### POST /settle
+Settles a verified payment transaction
 
-Settles (submits) a payment to the blockchain.
+### POST /atomic/verify
+Verifies an atomic payment transaction with callback instructions
 
-**Request:**
-```json
-{
-  "x402Version": 1,
-  "paymentPayload": {},
-  "paymentRequirements": {
-    "x402Version": 1,
-    "scheme": "exact",
-    "network": "solana",
-    "amount": "1000000",
-    "recipient": "..."
-  }
-}
-```
+### POST /atomic/settle
+Settles an atomic payment transaction
 
-**Response:**
-```json
-{
-  "success": true,
-  "transactionHash": "..."
-}
-```
+## Configuration
 
-## Development
+Edit \`src/config.ts\` to configure:
+- Networks (Solana mainnet/devnet, Base)
+- RPC endpoints
+- Compute limits
+- Fee payer settings
 
-The project structure:
+## Security
 
-```
-src/
-├── index.ts           # Main server file
-├── types/            # TypeScript type definitions
-├── routes/           # API endpoint handlers
-└── services/         # Blockchain service implementations
-```
+- Validates compute budget instructions
+- Checks for ATA creation patterns  
+- Verifies on-chain account states
+- Enforces max compute unit limits for atomic transactions
+- Position-based instruction validation
+- Handles signer account differences in decompiled transactions
 
 ## License
 

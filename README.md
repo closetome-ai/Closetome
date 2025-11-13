@@ -39,7 +39,7 @@ closetome-facilitator/
 
 ### 1. Install Dependencies
 
-\`\`\`bash
+```bash
 # Install root dependencies
 yarn install
 
@@ -52,39 +52,39 @@ cd ../solana-sdk && yarn install
 # Install example dependencies
 cd ../examples/server && yarn install
 cd ../examples/client && yarn install
-\`\`\`
+```
 
 ### 2. Start the Facilitator
 
-\`\`\`bash
+```bash
 cd facilitator
 yarn start
-\`\`\`
+```
 
-The facilitator will start on \`http://localhost:3010\`
+The facilitator will start on `http://localhost:3010`
 
 ### 3. Run Example Server
 
-\`\`\`bash
+```bash
 cd examples/server
 yarn start
-\`\`\`
+```
 
-The server will start on \`http://localhost:4000\` with both Standard and Atomic endpoints.
+The server will start on `http://localhost:4000` with both Standard and Atomic endpoints.
 
 ### 4. Test with Clients
 
 **Standard Payment Flow:**
-\`\`\`bash
+```bash
 cd examples/client
 node client.ts
-\`\`\`
+```
 
 **Atomic Payment Flow (Interactive):**
-\`\`\`bash
+```bash
 cd examples/client
 node atomic-client.ts
-\`\`\`
+```
 
 ## 📚 Documentation
 
@@ -109,7 +109,7 @@ node atomic-client.ts
 
 ### Server-Side (Standard)
 
-\`\`\`typescript
+```typescript
 import { createX402Middleware } from '@solana-sdk'
 
 const middleware = createX402Middleware({
@@ -126,11 +126,11 @@ const middleware = createX402Middleware({
 })
 
 app.use(middleware)
-\`\`\`
+```
 
 ### Server-Side (Atomic + Type-Safe)
 
-\`\`\`typescript
+```typescript
 import { defineRoute, createTypedRoute, prop } from '@solana-sdk'
 
 interface PremiumInput {
@@ -167,11 +167,11 @@ const route = defineRoute<PremiumInput, PremiumOutput>({
     return { success: true, message: input.message }
   }
 })
-\`\`\`
+```
 
 ### Client-Side
 
-\`\`\`typescript
+```typescript
 import { X402Client } from '@solana-sdk'
 
 const client = new X402Client({
@@ -184,7 +184,7 @@ const result = await client.requestWithPayment('/api/protected')
 
 // Atomic payment
 const result = await client.requestWithAtomicPayment('/api/premium?amount=2000000')
-\`\`\`
+```
 
 ## 🛠️ Development
 
@@ -197,17 +197,17 @@ const result = await client.requestWithAtomicPayment('/api/premium?amount=200000
 
 ### Building
 
-\`\`\`bash
+```bash
 # Build facilitator
 cd facilitator && yarn build
 
 # Build SDK
 cd solana-sdk && yarn build
-\`\`\`
+```
 
 ### Testing
 
-\`\`\`bash
+```bash
 # Test facilitator
 cd facilitator && yarn test
 
@@ -217,14 +217,14 @@ cd solana-sdk && yarn test
 # Run examples
 cd examples/server && yarn start
 cd examples/client && node atomic-client.ts
-\`\`\`
+```
 
 ## 🔒 Security
 
 ### Atomic Transactions
 
 - ✅ Client validates callback instructions don't contain user wallet
-- ✅ Facilitator enforces \`maxComputeUnitLimitAtomic\` (default 400k)
+- ✅ Facilitator enforces `maxComputeUnitLimitAtomic` (default 400k)
 - ✅ Server keypair required for signing (kept secure)
 - ✅ Position-based instruction validation
 - ✅ Signer account handling for decompiled transactions

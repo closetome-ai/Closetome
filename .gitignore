@@ -38,5 +38,3 @@ coverage/
 # Misc
 .cache/
 .temp/
-
-/*.md

@@ -8,6 +8,7 @@ import {
   AtomicVerifyResponse,
   AtomicSettleRequest,
   AtomicSettleResponse,
+  EVMAtomicPaymentPayload,
 } from './types'
 
 export class FacilitatorClient {
@@ -130,4 +131,5 @@ export class FacilitatorClient {
       throw error
     }
   }
+
 }

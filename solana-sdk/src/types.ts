@@ -1,8 +1,23 @@
 // X402 SDK Types
 
-export type Network = 'solana' | 'solana-devnet' | 'base' | 'base-sepolia'
+// Chain type classification
+export type ChainType = 'svm' | 'evm'
+
+// Network definitions
+export type SolanaNetwork = 'solana' | 'solana-devnet'
+export type EVMNetwork = 'base' | 'base-sepolia'
+export type Network = SolanaNetwork | EVMNetwork
+
 export type Scheme = 'exact'
 export type X402Version = 1
+
+// Helper to determine chain type from network
+export function getChainType(network: Network): ChainType {
+  if (network === 'solana' || network === 'solana-devnet') {
+    return 'svm'
+  }
+  return 'evm'
+}
 
 export interface SerializedInstruction {
   programId: string
@@ -112,10 +127,19 @@ export interface AtomicSettleRequest {
 }
 
 export interface CallbackTransaction {
-  // For EVM: encoded transaction data
+  // For EVM: target contract and calldata
   // For Solana: array of instructions
   type: 'evm' | 'solana'
-  data: any // This will be more specifically typed once facilitator defines the format
+  data: EVMCallbackData | SolanaCallbackData
+}
+
+export interface EVMCallbackData {
+  target: string      // Contract address to call (zero address to skip callback)
+  calldata: string    // Encoded function call data
+}
+
+export interface SolanaCallbackData {
+  instructions: SerializedInstruction[]
 }
 
 export interface AtomicSettleResponse {
@@ -147,23 +171,35 @@ export interface RoutePaymentRequirements {
 // Route configuration for different paths
 export interface RouteConfig {
   path: string | RegExp
+  network?: Network // Optional: override global network for this specific route
   // Can be static requirements or dynamic generator
   paymentRequirements: RoutePaymentRequirements | ((req: any) => Promise<RoutePaymentRequirements> | RoutePaymentRequirements)
   atomic?: boolean // Use atomic verification and settlement (requires serverKeypair in X402Config)
   autoSettle?: boolean
-  onPaymentVerified?: (payment: any, req: any) => Promise<void>
-  onPaymentSettled?: (payment: any, txHash: string, req: any) => Promise<void>
+  onPaymentVerified?: (payment: PaymentPayload, req: any) => Promise<void>
+  onPaymentSettled?: (payment: PaymentPayload, txHash: string, req: any) => Promise<void>
   // For atomic operations: generate callback transaction/instructions
-  onGenerateCallback?: (payment: any, req: any) => Promise<CallbackTransaction>
+  onGenerateCallback?: (payment: PaymentPayload, req: any) => Promise<CallbackTransaction>
+}
+
+// Wallet configuration - at least one wallet type must be provided
+export interface WalletConfig {
+  svm?: {
+    keypair: string // Base58 encoded Solana Keypair
+  }
+  evm?: {
+    privateKey: string // Hex encoded private key (with or without 0x prefix)
+    address?: string // Optional: will be derived from privateKey if not provided
+  }
 }
 
 // Main SDK configuration
 export interface X402Config {
-  network: Network
+  network: Network // Default network for all routes (can be overridden per route)
   facilitatorUrl: string
   routes: RouteConfig[]
   defaultPayTo?: string // Optional default payTo address for all routes
-  serverKeypair?: string // Base58 encoded Keypair for signing atomic transactions (Solana only)
+  serverWallet?: WalletConfig // Wallet for signing atomic transactions (provide svm, evm, or both)
   onPaymentFailed?: (error: Error, req: any) => Promise<void>
 }
 
@@ -171,4 +207,129 @@ export interface X402Config {
 export interface X402MiddlewareOptions {
   bypassOnError?: boolean // Continue if facilitator is unavailable
   customHeaders?: Record<string, string>
+}
+
+// Client wallet configuration - at least one wallet must be configured
+export interface X402ClientWalletConfig {
+  svm?: {
+    keypair: any // Solana Keypair instance (from @solana/web3.js)
+  }
+  evm?: {
+    privateKey: string // Hex encoded private key
+    provider?: any // Optional: ethers.js provider
+  }
+}
+
+// Helper function to validate wallet config against network
+export function validateWalletForNetwork(
+  wallet: X402ClientWalletConfig,
+  network: Network
+): { valid: boolean; error?: string } {
+  const chainType = getChainType(network)
+
+  if (chainType === 'svm' && !wallet.svm) {
+    return {
+      valid: false,
+      error: `Network '${network}' requires SVM wallet (Solana Keypair) but only EVM wallet is configured`
+    }
+  }
+
+  if (chainType === 'evm' && !wallet.evm) {
+    return {
+      valid: false,
+      error: `Network '${network}' requires EVM wallet (private key) but only SVM wallet is configured`
+    }
+  }
+
+  return { valid: true }
+}
+
+// =============================================================================
+// EVM Atomic Transaction Types (EIP-3009 transferWithAuthorization)
+// =============================================================================
+
+/**
+ * PayAuth structure for USDC transferWithAuthorization (EIP-3009)
+ * Used in EVM atomic transactions
+ */
+export interface EVMPayAuth {
+  from: string          // Address of the token holder (signer)
+  to: string            // Address of the recipient
+  value: string         // Amount of tokens (in wei, e.g., "1000000" for 1 USDC)
+  validAfter: string    // Unix timestamp after which the authorization is valid
+  validBefore: string   // Unix timestamp before which the authorization is valid
+  nonce: string         // Unique nonce (bytes32 as hex string)
+  v: number             // ECDSA signature component
+  r: string             // ECDSA signature component (bytes32 as hex string)
+  s: string             // ECDSA signature component (bytes32 as hex string)
+}
+
+/**
+ * Solana Payment Payload (before middleware processing)
+ * Contains a serialized transaction that will be signed by server
+ */
+export interface SolanaPaymentPayload {
+  transaction: string        // Base64 encoded serialized transaction
+}
+
+/**
+ * EVM Payment Payload (before middleware processing)
+ * Contains user's USDC transfer authorization
+ */
+export interface EVMPaymentPayload {
+  userPay: EVMPayAuth        // User -> Server USDC authorization
+}
+
+/**
+ * EVM Atomic Payment Payload (after middleware processing)
+ * Includes user payment authorization, server fee payment authorization, and callback info
+ */
+export interface EVMAtomicPaymentPayload {
+  userPay: EVMPayAuth        // User -> Server USDC authorization
+  feePay: EVMPayAuth         // Server -> Facilitator fee authorization
+  target: string             // Callback target contract address (zero address to skip)
+  callback: string           // Callback calldata (hex string)
+  proxyContract: string      // Address of the X402 proxy contract
+  network: EVMNetwork        // Which EVM network (base, base-sepolia, etc.)
+}
+
+/**
+ * Payment payload union type for onGenerateCallback
+ */
+export type PaymentPayload = SolanaPaymentPayload | EVMPaymentPayload | EVMAtomicPaymentPayload
+
+/**
+ * EVM Atomic Verify Request
+ */
+export interface EVMAtomicVerifyRequest {
+  x402Version: X402Version
+  paymentPayload: EVMAtomicPaymentPayload
+  paymentRequirements: PaymentRequirements
+}
+
+/**
+ * EVM Atomic Verify Response
+ */
+export interface EVMAtomicVerifyResponse {
+  isValid: boolean
+  error?: string
+  feeAmount?: string        // Calculated fee amount for verification
+}
+
+/**
+ * EVM Atomic Settle Request
+ */
+export interface EVMAtomicSettleRequest {
+  x402Version: X402Version
+  paymentPayload: EVMAtomicPaymentPayload
+  paymentRequirements: PaymentRequirements
+}
+
+/**
+ * EVM Atomic Settle Response
+ */
+export interface EVMAtomicSettleResponse {
+  success: boolean
+  transactionHash?: string
+  error?: string
 }

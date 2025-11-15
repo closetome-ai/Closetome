@@ -14,8 +14,19 @@ import {
   createAssociatedTokenAccountInstruction,
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from '@solana/spl-token'
+import { ethers } from 'ethers'
 import axios from 'axios'
-import { PaymentRequirements, SerializedInstruction } from './types'
+import {
+  PaymentRequirements,
+  SerializedInstruction,
+  X402ClientWalletConfig,
+  validateWalletForNetwork,
+  Network,
+  getChainType,
+  SolanaNetwork,
+  EVMNetwork
+} from './types'
+import { evmTransactionBuilder } from './evm-utils'
 
 const USDC_MINTS: Record<string, string> = {
   'solana': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -24,8 +35,7 @@ const USDC_MINTS: Record<string, string> = {
 
 export interface X402ClientConfig {
   serverUrl: string
-  payerKeypair: Keypair
-  network?: 'solana' | 'solana-devnet'
+  wallet: X402ClientWalletConfig // Support both SVM and EVM wallets
 }
 
 export interface X402PaymentResponse {
@@ -36,22 +46,30 @@ export interface X402PaymentResponse {
 
 export class X402Client {
   private serverUrl: string
-  private payer: Keypair
+  private wallet: X402ClientWalletConfig
   private connection?: Connection
-  private network: 'solana' | 'solana-devnet'
 
   constructor(config: X402ClientConfig) {
     this.serverUrl = config.serverUrl
-    this.payer = config.payerKeypair
-    this.network = config.network || 'solana-devnet'
+    this.wallet = config.wallet
+
+    // Validate that at least one wallet is configured
+    if (!this.wallet.svm && !this.wallet.evm) {
+      throw new Error('At least one wallet (SVM or EVM) must be configured')
+    }
+
+    console.log('[X402 Client] Initialized with wallets:', {
+      svm: this.wallet.svm ? `${this.wallet.svm.keypair.publicKey.toBase58()}` : 'not configured',
+      evm: this.wallet.evm ? 'configured' : 'not configured'
+    })
   }
 
   /**
    * Fetch payment requirements from a 402 response
    */
-  async getPaymentRequirements(endpoint: string): Promise<PaymentRequirements | null> {
+  async getPaymentRequirements(endpoint: string, params?: Record<string, any>): Promise<PaymentRequirements | null> {
     try {
-      await axios.get(`${this.serverUrl}${endpoint}`)
+      await axios.get(`${this.serverUrl}${endpoint}`, { params })
       return null // No payment required
     } catch (error: any) {
       if (error.response?.status === 402) {
@@ -65,9 +83,25 @@ export class X402Client {
   }
 
   /**
-   * Create a payment transaction based on requirements
+   * Validate wallet configuration against payment requirements network
    */
-  async createPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+  private validateWalletForRequirements(requirements: PaymentRequirements): void {
+    const validation = validateWalletForNetwork(this.wallet, requirements.network)
+    if (!validation.valid) {
+      throw new Error(validation.error)
+    }
+  }
+
+  /**
+   * Create a Solana payment transaction
+   */
+  private async createSolanaPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+    if (!this.wallet.svm) {
+      throw new Error('SVM wallet not configured')
+    }
+
+    const payer = this.wallet.svm.keypair
+
     // Set up connection based on network
     const rpcUrl = requirements.network === 'solana'
       ? 'https://api.mainnet-beta.solana.com'
@@ -83,7 +117,7 @@ export class X402Client {
     // Get token accounts
     const payerATA = await getAssociatedTokenAddress(
       usdcMint,
-      this.payer.publicKey
+      payer.publicKey
     )
 
     const recipientATA = await getAssociatedTokenAddress(
@@ -96,7 +130,7 @@ export class X402Client {
     const needsATACreation = !recipientATAInfo
 
     // Determine fee payer
-    let feePayer = this.payer.publicKey
+    let feePayer = payer.publicKey
     if (requirements.extra?.feePayer) {
       feePayer = new PublicKey(requirements.extra.feePayer)
     }
@@ -142,7 +176,7 @@ export class X402Client {
       createTransferInstruction(
         payerATA,
         recipientATA,
-        this.payer.publicKey,
+        payer.publicKey,
         BigInt(amount)
       )
     )
@@ -157,10 +191,40 @@ export class X402Client {
     const transaction = new VersionedTransaction(messageV0)
 
     // Sign with payer
-    transaction.sign([this.payer])
+    transaction.sign([payer])
 
     // Serialize to base64
     return Buffer.from(transaction.serialize()).toString('base64')
+  }
+
+  /**
+   * Create an EVM payment transaction
+   */
+  private async createEVMPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+    if (!this.wallet.evm) {
+      throw new Error('EVM wallet not configured')
+    }
+
+    return await evmTransactionBuilder.createPaymentTransaction(
+      requirements,
+      this.wallet.evm.privateKey
+    )
+  }
+
+  /**
+   * Create a payment transaction based on requirements
+   */
+  async createPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+    // Validate wallet is configured for this network
+    this.validateWalletForRequirements(requirements)
+
+    const chainType = getChainType(requirements.network)
+
+    if (chainType === 'svm') {
+      return await this.createSolanaPaymentTransaction(requirements)
+    } else {
+      return await this.createEVMPaymentTransaction(requirements)
+    }
   }
 
   /**
@@ -169,6 +233,7 @@ export class X402Client {
   async requestWithPayment(endpoint: string, options: {
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
     data?: any
+    params?: Record<string, any>
     headers?: Record<string, string>
   } = {}): Promise<any> {
     // Try request without payment first
@@ -177,6 +242,7 @@ export class X402Client {
         url: `${this.serverUrl}${endpoint}`,
         method: options.method || 'GET',
         data: options.data,
+        params: options.params,
         headers: options.headers
       })
       return response.data
@@ -194,17 +260,34 @@ export class X402Client {
         const paymentTx = await this.createPaymentTransaction(requirements)
 
         // Create payment payload
-        const paymentPayload = { transaction: paymentTx }
-        const paymentHeader = Buffer.from(JSON.stringify(paymentPayload)).toString('base64')
+        const chainType = getChainType(requirements.network)
+        let paymentHeader: string
+
+        if (chainType === 'evm') {
+          // EVM: Use full X402 message structure
+          const payload = JSON.parse(paymentTx) // { signature, authorization }
+          const paymentMessage = {
+            x402Version: 1,
+            scheme: requirements.scheme,
+            network: requirements.network,
+            payload
+          }
+          paymentHeader = Buffer.from(JSON.stringify(paymentMessage)).toString('base64')
+        } else {
+          // Solana: Simple format - just the transaction
+          const payload = { transaction: paymentTx }
+          paymentHeader = Buffer.from(JSON.stringify(payload)).toString('base64')
+        }
 
         // Retry with payment header
         const response = await axios({
           url: `${this.serverUrl}${endpoint}`,
           method: options.method || 'GET',
           data: options.data,
+          params: options.params,
           headers: {
             ...options.headers,
-            'X-X402-Payment': paymentHeader
+            'X-Payment': paymentHeader
           }
         })
 
@@ -216,10 +299,12 @@ export class X402Client {
   }
 
   /**
-   * Validate callback instructions to ensure they don't contain user's wallet as account
+   * Validate callback instructions to ensure they don't contain user's wallet as account (Solana only)
    */
-  private validateCallbackInstructions(callbackInstructions: SerializedInstruction[]): void {
-    const userWallet = this.payer.publicKey.toBase58()
+  private validateSolanaCallbackInstructions(callbackInstructions: SerializedInstruction[]): void {
+    if (!this.wallet.svm) return
+
+    const userWallet = this.wallet.svm.keypair.publicKey.toBase58()
 
     for (const instruction of callbackInstructions) {
       for (const key of instruction.keys) {
@@ -234,7 +319,7 @@ export class X402Client {
   }
 
   /**
-   * Deserialize callback instructions from server
+   * Deserialize callback instructions from server (Solana)
    */
   private deserializeCallbackInstructions(serializedInstructions: SerializedInstruction[]): TransactionInstruction[] {
     return serializedInstructions.map(ix => new TransactionInstruction({
@@ -249,15 +334,21 @@ export class X402Client {
   }
 
   /**
-   * Create an atomic payment transaction with callback instructions
+   * Create an atomic Solana payment transaction with callback instructions
    */
-  async createAtomicPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+  private async createSolanaAtomicPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+    if (!this.wallet.svm) {
+      throw new Error('SVM wallet not configured')
+    }
+
     if (!requirements.extra?.callbackInstructions) {
       throw new Error('No callback instructions provided for atomic transaction')
     }
 
+    const payer = this.wallet.svm.keypair
+
     // Validate callback instructions for security
-    this.validateCallbackInstructions(requirements.extra.callbackInstructions)
+    this.validateSolanaCallbackInstructions(requirements.extra.callbackInstructions)
 
     // Set up connection based on network
     const rpcUrl = requirements.network === 'solana'
@@ -274,7 +365,7 @@ export class X402Client {
     // Get token accounts
     const payerATA = await getAssociatedTokenAddress(
       usdcMint,
-      this.payer.publicKey
+      payer.publicKey
     )
 
     const recipientATA = await getAssociatedTokenAddress(
@@ -287,7 +378,7 @@ export class X402Client {
     const needsATACreation = !recipientATAInfo
 
     // Determine fee payer
-    let feePayer = this.payer.publicKey
+    let feePayer = payer.publicKey
     if (requirements.extra?.feePayer) {
       feePayer = new PublicKey(requirements.extra.feePayer)
     }
@@ -328,7 +419,7 @@ export class X402Client {
       createTransferInstruction(
         payerATA,
         recipientATA,
-        this.payer.publicKey,
+        payer.publicKey,
         BigInt(amount)
       )
     )
@@ -349,10 +440,27 @@ export class X402Client {
     const transaction = new VersionedTransaction(messageV0)
 
     // Sign with payer (only user signs, server will sign later)
-    transaction.sign([this.payer])
+    transaction.sign([payer])
 
     // Serialize to base64
     return Buffer.from(transaction.serialize()).toString('base64')
+  }
+
+  /**
+   * Create an atomic payment transaction with callback instructions
+   * Note: Currently only supports Solana (SVM). EVM atomic transactions are not yet implemented.
+   */
+  async createAtomicPaymentTransaction(requirements: PaymentRequirements): Promise<string> {
+    // Validate wallet is configured for this network
+    this.validateWalletForRequirements(requirements)
+
+    const chainType = getChainType(requirements.network)
+
+    if (chainType === 'svm') {
+      return await this.createSolanaAtomicPaymentTransaction(requirements)
+    } else {
+      throw new Error('EVM atomic transactions are not yet implemented. Only Solana (SVM) atomic payments are currently supported.')
+    }
   }
 
   /**
@@ -361,6 +469,7 @@ export class X402Client {
   async requestWithAtomicPayment(endpoint: string, options: {
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
     data?: any
+    params?: Record<string, any>
     headers?: Record<string, string>
   } = {}): Promise<any> {
     // Try request without payment first
@@ -369,6 +478,7 @@ export class X402Client {
         url: `${this.serverUrl}${endpoint}`,
         method: options.method || 'GET',
         data: options.data,
+        params: options.params,
         headers: options.headers
       })
       return response.data
@@ -382,26 +492,39 @@ export class X402Client {
 
         const requirements = paymentResponse.accepts[0]
 
-        // Check if atomic transaction is required
-        if (!requirements.extra?.callbackInstructions) {
+        // Check if atomic transaction is required (Solana only)
+        const chainType = getChainType(requirements.network)
+        if (chainType === 'svm' && !requirements.extra?.callbackInstructions) {
           throw new Error('Endpoint requires atomic payment but no callback instructions provided')
+        }
+        if (chainType === 'evm') {
+          throw new Error('EVM atomic transactions are not yet implemented. Only Solana (SVM) atomic payments are currently supported.')
         }
 
         // Create atomic payment transaction
         const paymentTx = await this.createAtomicPaymentTransaction(requirements)
 
-        // Create payment payload
-        const paymentPayload = { transaction: paymentTx }
-        const paymentHeader = Buffer.from(JSON.stringify(paymentPayload)).toString('base64')
+        // Create payment payload according to X402 spec
+        const payload = { transaction: paymentTx }
+
+        // Build X-Payment header according to X402 spec
+        const paymentMessage = {
+          x402Version: 1,
+          scheme: requirements.scheme,
+          network: requirements.network,
+          payload
+        }
+        const paymentHeader = Buffer.from(JSON.stringify(paymentMessage)).toString('base64')
 
         // Retry with payment header
         const response = await axios({
           url: `${this.serverUrl}${endpoint}`,
           method: options.method || 'GET',
           data: options.data,
+          params: options.params,
           headers: {
             ...options.headers,
-            'X-X402-Payment': paymentHeader
+            'X-Payment': paymentHeader
           }
         })
 
@@ -413,9 +536,28 @@ export class X402Client {
   }
 
   /**
-   * Get payer's public key
+   * Get payer's public key (SVM)
    */
-  getPayerPublicKey(): string {
-    return this.payer.publicKey.toBase58()
+  getPayerPublicKey(): string | null {
+    return this.wallet.svm ? this.wallet.svm.keypair.publicKey.toBase58() : null
+  }
+
+  /**
+   * Get payer's address (EVM)
+   */
+  getPayerAddress(): string | null {
+    if (!this.wallet.evm) return null
+    const wallet = new ethers.Wallet(this.wallet.evm.privateKey)
+    return wallet.address
+  }
+
+  /**
+   * Get wallet info for debugging
+   */
+  getWalletInfo(): { svm: string | null; evm: string | null } {
+    return {
+      svm: this.getPayerPublicKey(),
+      evm: this.getPayerAddress()
+    }
   }
 }

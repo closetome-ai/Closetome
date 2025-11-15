@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
+import { ethers } from 'ethers'
 import {
   X402Config,
   X402MiddlewareOptions,
@@ -10,9 +11,23 @@ import {
   AtomicSettleRequest,
   X402Version,
   RouteConfig,
-  RoutePaymentRequirements
+  RoutePaymentRequirements,
+  WalletConfig,
+  Network,
+  getChainType,
+  EVMNetwork,
+  EVMPayAuth,
+  EVMAtomicPaymentPayload
 } from './types'
 import { FacilitatorClient } from './facilitator-client'
+import { EVMTransactionBuilderImpl } from './evm-utils'
+import * as path from 'path'
+import * as fs from 'fs'
+
+// Load EVM proxy ABI
+const evmProxyABI = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '../../facilitator/src/evmProxy.json'), 'utf-8')
+)
 
 export class X402Middleware {
   private config: X402Config
@@ -20,7 +35,11 @@ export class X402Middleware {
   private options: X402MiddlewareOptions
   private extraCache?: Record<string, any>
   private extraFetched: boolean = false
-  private serverKeypair?: Keypair // Solana Keypair for signing atomic transactions
+
+  // Wallet instances for signing atomic transactions
+  private svmWallet?: Keypair // Solana Keypair
+  private evmWallet?: ethers.Wallet // EVM Wallet
+  private evmTxBuilder: EVMTransactionBuilderImpl
 
   constructor(config: X402Config, options: X402MiddlewareOptions = {}) {
     this.config = config
@@ -32,15 +51,120 @@ export class X402Middleware {
     // Initialize facilitator client
     this.facilitatorClient = new FacilitatorClient(config.facilitatorUrl)
 
-    // Load server keypair if provided (for atomic transactions)
-    if (config.serverKeypair && (config.network === 'solana' || config.network === 'solana-devnet')) {
+    // Initialize EVM transaction builder
+    this.evmTxBuilder = new EVMTransactionBuilderImpl()
+
+    // Load server wallets if provided (for atomic transactions)
+    if (config.serverWallet) {
+      this.loadServerWallets(config.serverWallet)
+    }
+  }
+
+  /**
+   * Load server wallets from configuration
+   */
+  private loadServerWallets(walletConfig: WalletConfig): void {
+    // Load SVM wallet (Solana)
+    if (walletConfig.svm) {
       try {
-        this.serverKeypair = Keypair.fromSecretKey(bs58.decode(config.serverKeypair))
+        this.svmWallet = Keypair.fromSecretKey(bs58.decode(walletConfig.svm.keypair))
+        console.log('[X402] Loaded SVM wallet:', this.svmWallet.publicKey.toBase58())
       } catch (error) {
-        console.error('Failed to load server keypair:', error)
-        throw new Error('Invalid server keypair for atomic transactions')
+        console.error('Failed to load SVM wallet:', error)
+        throw new Error('Invalid SVM keypair for atomic transactions')
       }
     }
+
+    // Load EVM wallet
+    if (walletConfig.evm) {
+      try {
+        const privateKey = walletConfig.evm.privateKey.startsWith('0x')
+          ? walletConfig.evm.privateKey.slice(2)
+          : walletConfig.evm.privateKey
+        this.evmWallet = new ethers.Wallet(privateKey)
+        console.log('[X402] Loaded EVM wallet:', this.evmWallet.address)
+      } catch (error) {
+        console.error('Failed to load EVM wallet:', error)
+        throw new Error('Invalid EVM private key for atomic transactions')
+      }
+    }
+  }
+
+  /**
+   * Get the appropriate wallet for a given network
+   */
+  private getWalletForNetwork(network: Network): Keypair | ethers.Wallet | null {
+    const chainType = getChainType(network)
+
+    if (chainType === 'svm') {
+      return this.svmWallet || null
+    } else {
+      return this.evmWallet || null
+    }
+  }
+
+  /**
+   * Read proxy contract configuration (feeReceiver and feeBps)
+   */
+  private async readProxyConfig(proxyContract: string, network: EVMNetwork): Promise<{
+    feeReceiver: string
+    feeBps: bigint
+  }> {
+    const provider = this.evmTxBuilder.getProvider(network)
+    const proxy = new ethers.Contract(proxyContract, evmProxyABI, provider)
+
+    const [feeReceiver, feeBps] = await Promise.all([
+      proxy.feeReceiver(),
+      proxy.feeBps()
+    ])
+
+    return { feeReceiver, feeBps }
+  }
+
+  /**
+   * Generate feePay signature for EVM atomic payment
+   * Server pays fee to facilitator based on userPay amount and proxy's feeBps
+   */
+  private async generateEVMFeePay(
+    userPay: EVMPayAuth,
+    proxyContract: string,
+    network: EVMNetwork
+  ): Promise<EVMPayAuth> {
+    if (!this.evmWallet) {
+      throw new Error('EVM wallet not configured for atomic transactions')
+    }
+
+    // Read proxy contract configuration
+    const { feeReceiver, feeBps } = await this.readProxyConfig(proxyContract, network)
+
+    // Calculate fee: floor(userPay.value * feeBps / 10000)
+    const userValue = BigInt(userPay.value)
+    const feeAmount = (userValue * feeBps) / BigInt(10000)
+
+    // Server is the recipient of userPay
+    const serverAddress = userPay.to
+
+    // Generate nonce for feePay
+    const nonce = this.evmTxBuilder.generateNonce()
+
+    // Set validity window - start from 60 seconds ago to account for clock skew
+    const now = Math.floor(Date.now() / 1000)
+    const validAfter = now - 60 // Account for clock skew
+    const validBefore = now + 300 // 5 minutes from now
+
+    // Sign feePay authorization: server → feeReceiver
+    const feePay = await this.evmTxBuilder.signTransferAuthorization(
+      serverAddress,           // from: server
+      feeReceiver,             // to: facilitator's feeReceiver
+      feeAmount.toString(),    // value: calculated fee
+      validAfter,
+      validBefore,
+      nonce,
+      this.evmWallet.privateKey,
+      network
+    )
+
+    return feePay
   }
 
   /**
@@ -80,8 +204,8 @@ export class X402Middleware {
         return next()
       }
 
-      // Check if payment header is present
-      const paymentHeader = req.headers['x-x402-payment']
+      // Check if payment header is present (X-Payment as per X402 spec)
+      const paymentHeader = req.headers['x-payment']
 
       if (!paymentHeader) {
         // No payment provided, return 402 with route-specific requirements
@@ -90,19 +214,23 @@ export class X402Middleware {
 
       try {
         // Parse payment from header (base64 decode if needed)
-        let payment: any
+        let paymentMessage: any
         if (typeof paymentHeader === 'string') {
           try {
             // Try to parse as base64 first
             const decoded = Buffer.from(paymentHeader, 'base64').toString('utf-8')
-            payment = JSON.parse(decoded)
+            paymentMessage = JSON.parse(decoded)
           } catch {
             // Fall back to direct JSON parse
-            payment = JSON.parse(paymentHeader)
+            paymentMessage = JSON.parse(paymentHeader)
           }
         } else {
-          payment = paymentHeader
+          paymentMessage = paymentHeader
         }
+
+        // Extract payload from X402 payment message
+        // X-Payment header format: { x402Version, scheme, network, payload }
+        let payment = paymentMessage.payload || paymentMessage
 
         // Ensure extra fields are fetched before building requirements
         await this.ensureExtraFields()
@@ -112,34 +240,125 @@ export class X402Middleware {
 
         // Handle atomic transactions differently
         if (routeConfig.atomic) {
+          // Determine which network to use (route-specific or global)
+          const network = routeConfig.network || this.config.network
+          const wallet = this.getWalletForNetwork(network)
+
           // Atomic transaction flow
-          if (!this.serverKeypair) {
-            return await this.send402Response(res, routeConfig, 'Server keypair not configured for atomic transactions', req)
+          if (!wallet) {
+            const chainType = getChainType(network)
+            return await this.send402Response(
+              res,
+              routeConfig,
+              `Server ${chainType.toUpperCase()} wallet not configured for atomic transactions on network ${network}`,
+              req
+            )
           }
 
           // Step 1: Verify atomic payment with facilitator
-          const atomicVerifyRequest = {
-            x402Version: 1 as const,
-            paymentPayload: payment,
-            paymentRequirements: requirements
+          const chainType = getChainType(network)
+          let verifyResult: { isValid: boolean; error?: string }
+
+          if (chainType === 'svm') {
+            // Solana atomic verification
+            const atomicVerifyRequest = {
+              x402Version: 1 as const,
+              paymentPayload: payment,
+              paymentRequirements: requirements
+            }
+            verifyResult = await this.facilitatorClient.atomicVerify(atomicVerifyRequest)
+          } else {
+            // EVM atomic verification (just validates payment format, feePay will be generated by server)
+            // Client sends either { userPay } or { signature, authorization }
+            if (!payment.userPay && !payment.signature) {
+              return await this.send402Response(res, routeConfig, 'EVM atomic payment missing userPay or signature', req)
+            }
+            verifyResult = { isValid: true }
           }
 
-          const atomicVerifyResponse = await this.facilitatorClient.atomicVerify(atomicVerifyRequest)
-
-          if (!atomicVerifyResponse.isValid) {
-            return await this.send402Response(res, routeConfig, 'Atomic payment verification failed', req)
+          if (!verifyResult.isValid) {
+            return await this.send402Response(res, routeConfig, `Atomic payment verification failed: ${verifyResult.error}`, req)
           }
 
-          // Step 2: Server signs the transaction (for callback instructions)
+          // Step 2: Handle chain-specific atomic payment processing
           try {
-            const { VersionedTransaction } = require('@solana/web3.js')
-            const txBuffer = Buffer.from(payment.transaction, 'base64')
-            const transaction = VersionedTransaction.deserialize(txBuffer)
-            transaction.sign([this.serverKeypair])
-            payment.transaction = Buffer.from(transaction.serialize()).toString('base64')
+            const chainType = getChainType(network)
+
+            if (chainType === 'svm') {
+              // Solana atomic: Sign transaction with server wallet
+              const { VersionedTransaction } = require('@solana/web3.js')
+              const txBuffer = Buffer.from(payment.transaction, 'base64')
+              const transaction = VersionedTransaction.deserialize(txBuffer)
+              transaction.sign([wallet as Keypair])
+              payment.transaction = Buffer.from(transaction.serialize()).toString('base64')
+            } else {
+              // EVM atomic: Convert client's payment to EVMPayAuth and build complete payload
+              const evmNetwork = network as EVMNetwork
+
+              // Client sends { signature, authorization }, we need to convert to EVMPayAuth
+              let userPay: EVMPayAuth
+              if ('userPay' in payment) {
+                // Already in EVMPayAuth format (shouldn't happen from client)
+                userPay = payment.userPay as EVMPayAuth
+              } else if ('signature' in payment && 'authorization' in payment) {
+                // Convert from client format { signature, authorization } to EVMPayAuth
+                const sig = ethers.Signature.from(payment.signature)
+                userPay = {
+                  from: payment.authorization.from,
+                  to: payment.authorization.to,
+                  value: payment.authorization.value,
+                  validAfter: payment.authorization.validAfter,
+                  validBefore: payment.authorization.validBefore,
+                  nonce: payment.authorization.nonce,
+                  v: sig.v,
+                  r: sig.r,
+                  s: sig.s
+                }
+              } else {
+                throw new Error('Invalid EVM payment format. Expected { signature, authorization }')
+              }
+
+              // Get proxy contract from facilitator's /supported endpoint (stored in extraCache)
+              const proxyContract = this.extraCache?.proxyContract
+              if (!proxyContract) {
+                throw new Error(`Proxy contract not configured for network ${evmNetwork}. Check facilitator /supported endpoint.`)
+              }
+
+              // Generate feePay signature
+              const feePay = await this.generateEVMFeePay(userPay, proxyContract, evmNetwork)
+
+              // Generate callback if route has onGenerateCallback
+              let callbackTarget = ethers.ZeroAddress
+              let callbackData = '0x'
+
+              if (routeConfig.onGenerateCallback) {
+                // Pass payment in EVMPaymentPayload format for callback generation
+                const paymentForCallback: any = { userPay }
+                const callbackTx = await routeConfig.onGenerateCallback(paymentForCallback, req)
+                if (callbackTx.type === 'evm' && 'target' in callbackTx.data && 'calldata' in callbackTx.data) {
+                  callbackTarget = callbackTx.data.target
+                  callbackData = callbackTx.data.calldata
+                }
+              }
+
+              // Build complete EVM atomic payment payload
+              // Note: proxyContract field is kept for compatibility but facilitator will use its own configured address
+              const evmAtomicPayload: EVMAtomicPaymentPayload = {
+                userPay,
+                feePay,
+                target: callbackTarget,
+                callback: callbackData,
+                proxyContract, // Kept for compatibility, facilitator uses its own configured address
+                network: evmNetwork
+              }
+
+              // Replace payment payload with complete EVM atomic payload
+              payment = evmAtomicPayload
+            }
           } catch (error) {
-            console.error('Failed to sign atomic transaction:', error)
-            return await this.send402Response(res, routeConfig, 'Failed to sign atomic transaction', req)
+            console.error('Failed to process atomic payment:', error)
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            return await this.send402Response(res, routeConfig, `Atomic payment processing failed: ${errorMessage}`, req)
           }
 
           // Call route-specific verification callback
@@ -149,32 +368,37 @@ export class X402Middleware {
 
           // Step 3: Settle if autoSettle is enabled
           if (routeConfig.autoSettle) {
+            // Use unified atomic settle endpoint (network-based routing on facilitator side)
             const atomicSettleRequest: AtomicSettleRequest = {
               x402Version: 1,
               paymentPayload: payment,
               paymentRequirements: requirements,
-              callback: { type: 'solana', data: null } // Transaction already signed by server
+              callback: { type: 'solana', data: { instructions: [] } } // Only used for SVM, ignored for EVM
             }
 
             const atomicSettleResponse = await this.facilitatorClient.atomicSettle(atomicSettleRequest)
 
             if (!atomicSettleResponse.success) {
-              return await this.send402Response(res, routeConfig, 'Atomic settlement failed', req)
+              return await this.send402Response(res, routeConfig, `Atomic settlement failed: ${atomicSettleResponse.error}`, req)
             }
 
+            const settlementTxHash = atomicSettleResponse.settlementTxHash
+            const callbackTxHash = atomicSettleResponse.callbackTxHash
+
             // Call route-specific settlement callback
-            if (routeConfig.onPaymentSettled && atomicSettleResponse.settlementTxHash) {
-              await routeConfig.onPaymentSettled(payment, atomicSettleResponse.settlementTxHash, req)
+            if (routeConfig.onPaymentSettled && settlementTxHash) {
+              await routeConfig.onPaymentSettled(payment, settlementTxHash, req)
             }
 
             // Add transaction info to request for downstream use
             (req as any).x402 = {
-              settlementTxHash: atomicSettleResponse.settlementTxHash,
-              callbackTxHash: atomicSettleResponse.callbackTxHash,
+              settlementTxHash,
+              callbackTxHash,
               payment: payment,
               route: req.path,
               settled: true,
-              atomic: true
+              atomic: true,
+              network
             }
           } else {
             // Just verify, no settlement
@@ -183,7 +407,8 @@ export class X402Middleware {
               route: req.path,
               verified: true,
               settled: false,
-              atomic: true
+              atomic: true,
+              network
             }
           }
         } else {
@@ -325,6 +550,9 @@ export class X402Middleware {
       routeReqs = routeConfig.paymentRequirements
     }
 
+    // Determine network: route-specific overrides global
+    const network = routeConfig.network || this.config.network
+
     // Start with route's extra field if defined
     let extra = routeReqs.extra || {}
 
@@ -338,14 +566,14 @@ export class X402Middleware {
 
     const requirements: PaymentRequirements = {
       scheme: 'exact',
-      network: this.config.network,
+      network: network,
       maxAmountRequired: routeReqs.maxAmountRequired || '1000000',
       resource: routeReqs.resource || routeConfig.path.toString(),
       description: routeReqs.description || 'API Access',
       mimeType: routeReqs.mimeType || 'application/json',
       payTo: routeReqs.payTo || this.config.defaultPayTo || '',
       maxTimeoutSeconds: routeReqs.maxTimeoutSeconds || 300,
-      asset: routeReqs.asset || this.getAssetAddress(),
+      asset: routeReqs.asset || this.getAssetAddress(network),
       outputSchema: routeReqs.outputSchema,
       extra: Object.keys(extra).length > 0 ? extra : undefined
     }
@@ -356,8 +584,8 @@ export class X402Middleware {
   /**
    * Get asset address based on network
    */
-  private getAssetAddress(): string {
-    switch (this.config.network) {
+  private getAssetAddress(network: Network): string {
+    switch (network) {
       case 'solana':
         return 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' // USDC mainnet
       case 'solana-devnet':

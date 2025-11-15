@@ -1,7 +1,7 @@
 {
-  "name": "@closetome/solana-x402-sdk",
-  "version": "0.1.0",
-  "description": "Solana X402 payment SDK for both server and client applications",
+  "name": "@closetome/x402-sdk",
+  "version": "0.2.0",
+  "description": "Multi-chain X402 payment SDK supporting Solana (SVM) and EVM chains (Base, Ethereum, BSC) for both server and client applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -10,15 +10,29 @@
     "example": "nodemon --exec ts-node examples/basic-server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["x402", "payment", "middleware", "express", "solana", "base", "usdc"],
+  "keywords": [
+    "x402",
+    "payment",
+    "middleware",
+    "express",
+    "solana",
+    "base",
+    "ethereum",
+    "bsc",
+    "evm",
+    "svm",
+    "usdc",
+    "multi-chain"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@solana/web3.js": "^1.95.8",
     "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.95.8",
     "axios": "^1.13.1",
-    "express": "^5.1.0",
-    "bs58": "^6.0.0"
+    "bs58": "^6.0.0",
+    "ethers": "^6.13.4",
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.5",

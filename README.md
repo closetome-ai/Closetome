@@ -74,16 +74,16 @@ The server will start on `http://localhost:4000` with both Standard and Atomic e
 
 ### 4. Test with Clients
 
-**Standard Payment Flow:**
+**Solana Client (Standard + Atomic):**
 ```bash
 cd examples/client
-node client.ts
+ts-node client.ts
 ```
 
-**Atomic Payment Flow (Interactive):**
+**Base/EVM Client (Standard + Atomic with NFT Minting):**
 ```bash
 cd examples/client
-node atomic-client.ts
+ts-node base-client.ts
 ```
 
 ## 📚 Documentation

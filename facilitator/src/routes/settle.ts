@@ -1,13 +1,12 @@
 import { Request, Response } from 'express'
 import { SettleRequest, SettleResponse } from '../types'
 import { SolanaService } from '../services/solanaService'
-import { BaseService } from '../services/baseService'
+import { EVMService } from '../services/evmService'
 
 // Initialize services
 const solanaMainnetService = new SolanaService('https://api.mainnet-beta.solana.com')
 const solanaDevnetService = new SolanaService('https://api.devnet.solana.com')
-const baseMainnetService = new BaseService('base')
-const baseSepoliaService = new BaseService('base-sepolia')
+const evmService = new EVMService()
 
 /**
  * POST /settle
@@ -36,28 +35,38 @@ export const settlePayment = async (req: Request, res: Response): Promise<void> 
     }
 
     const { paymentRequirements, paymentPayload } = settleRequest
+    const network: string = paymentRequirements.network
+
+    // Determine chain type
+    const isSVM = network === 'solana' || network === 'solana-devnet'
+    const isEVM = network === 'base' || network === 'base-sepolia'
+
+    if (!isSVM && !isEVM) {
+      res.status(400).json({
+        success: false,
+        error: `Unsupported network: ${network}`
+      } as SettleResponse)
+      return
+    }
+
     let result: { success: boolean; transactionHash?: string; error?: string }
 
-    // Route to appropriate service based on network
-    switch (paymentRequirements.network) {
-      case 'solana':
-        result = await solanaMainnetService.settlePayment(paymentPayload, paymentRequirements)
-        break
-      case 'solana-devnet':
-        result = await solanaDevnetService.settlePayment(paymentPayload, paymentRequirements)
-        break
-      case 'base':
-        result = await baseMainnetService.settlePayment(paymentPayload, paymentRequirements)
-        break
-      case 'base-sepolia':
-        result = await baseSepoliaService.settlePayment(paymentPayload, paymentRequirements)
-        break
-      default:
-        res.status(400).json({
-          success: false,
-          error: `Unsupported network: ${paymentRequirements.network}`
-        } as SettleResponse)
-        return
+    // Route to appropriate service based on network type
+    if (isSVM) {
+      // Solana payment settlement
+      switch (network) {
+        case 'solana':
+          result = await solanaMainnetService.settlePayment(paymentPayload, paymentRequirements)
+          break
+        case 'solana-devnet':
+          result = await solanaDevnetService.settlePayment(paymentPayload, paymentRequirements)
+          break
+        default:
+          result = { success: false, error: `Unsupported SVM network: ${network}` }
+      }
+    } else {
+      // EVM payment settlement
+      result = await evmService.settlePaymentWithRequirements(paymentPayload, paymentRequirements)
     }
 
     const response: SettleResponse = {

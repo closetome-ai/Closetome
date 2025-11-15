@@ -19,6 +19,7 @@
  */
 
 import express from 'express'
+import type { Request, Response } from 'express'
 import {
   createX402Middleware,
   defineRoute,
@@ -234,7 +235,11 @@ const x402Middleware = createX402Middleware({
   facilitatorUrl: FACILITATOR_URL,
   routes: routes,
   defaultPayTo: PAYMENT_RECIPIENT,
-  serverKeypair: bs58.encode(SERVER_ACCOUNT.secretKey), // Required for atomic transactions
+  serverWallet: {
+    svm: {
+      keypair: bs58.encode(SERVER_ACCOUNT.secretKey) // Required for atomic transactions
+    }
+  },
   onPaymentFailed: async (error, req) => {
     console.error('❌ Payment failed:', req.path, error.message)
   }

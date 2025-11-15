@@ -33,7 +33,10 @@ export function createTypedRoute<TInput = any, TOutput = any>(
       }
 
       return requirements
-    }
+    },
+
+    // Copy onGenerateCallback if present
+    onGenerateCallback: definition.onGenerateCallback
   }
 
   return routeConfig

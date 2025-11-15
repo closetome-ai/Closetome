@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { SUPPORTED_NETWORKS, SupportedPaymentKindsResponse } from '../types'
 import { SolanaService } from '../services/solanaService'
+import { EVMService } from '../services/evmService'
 
 /**
  * GET /supported
@@ -43,9 +44,26 @@ export const getSupportedNetworks = async (req: Request, res: Response): Promise
     }
     networks.push(solanaMainnet)
 
-    // Base networks (no fee payer needed)
-    networks.push(SUPPORTED_NETWORKS['base-sepolia'])
-    networks.push(SUPPORTED_NETWORKS['base'])
+    // Base networks - add proxy contract info if configured
+    const evmService = new EVMService()
+
+    const baseSepolia = { ...SUPPORTED_NETWORKS['base-sepolia'] }
+    try {
+      const proxyContract = evmService.getProxyContract('base-sepolia')
+      baseSepolia.extra = { proxyContract }
+    } catch {
+      // No proxy contract configured for base-sepolia
+    }
+    networks.push(baseSepolia)
+
+    const base = { ...SUPPORTED_NETWORKS['base'] }
+    try {
+      const proxyContract = evmService.getProxyContract('base')
+      base.extra = { proxyContract }
+    } catch {
+      // No proxy contract configured for base mainnet
+    }
+    networks.push(base)
 
     const response: SupportedPaymentKindsResponse = {
       kinds: networks

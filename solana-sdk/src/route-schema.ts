@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { OutputSchema, PropertySchema, RoutePaymentRequirements } from './types'
+import { OutputSchema, PropertySchema, RoutePaymentRequirements, CallbackTransaction, PaymentPayload } from './types'
 
 /**
  * Simple schema definition with direct TypeScript types
@@ -20,6 +20,9 @@ export interface TypedRouteDefinition<TInput = any, TOutput = any> {
     input: TInput
     req: Request
   }) => Promise<RoutePaymentRequirements> | RoutePaymentRequirements
+
+  // Optional callback generator for atomic operations
+  onGenerateCallback?: (payment: PaymentPayload, req: Request) => Promise<CallbackTransaction>
 
   // Typed handler
   handler: (params: {

@@ -33,7 +33,7 @@ app.get('/supported', getSupportedNetworks)
 app.post('/verify', verifyPayment)
 app.post('/settle', settlePayment)
 
-// Atomic transaction routes
+// Atomic transaction routes (supports both SVM and EVM based on network)
 app.post('/atomic/verify', verifyAtomicPayment)
 app.post('/atomic/settle', settleAtomicPayment)
 
@@ -53,10 +53,10 @@ app.get('/', (req: Request, res: Response) => {
     version: '1.0.0',
     endpoints: {
       'GET /supported': 'Get list of supported payment networks',
-      'POST /verify': 'Verify a payment payload',
-      'POST /settle': 'Settle (submit) a payment to blockchain',
-      'POST /atomic/verify': 'Verify an atomic payment with callback instructions',
-      'POST /atomic/settle': 'Settle (submit) an atomic payment to blockchain',
+      'POST /verify': 'Verify a payment payload (SVM/EVM)',
+      'POST /settle': 'Settle (submit) a payment to blockchain (SVM/EVM)',
+      'POST /atomic/verify': 'Verify an atomic payment (SVM/EVM, network-based routing)',
+      'POST /atomic/settle': 'Settle an atomic payment (SVM/EVM, network-based routing)',
       'GET /health': 'Health check endpoint'
     }
   })
@@ -85,9 +85,9 @@ app.listen(PORT, () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`)
   console.log(`Available endpoints:`)
   console.log(`  GET  http://localhost:${PORT}/supported`)
-  console.log(`  POST http://localhost:${PORT}/verify`)
-  console.log(`  POST http://localhost:${PORT}/settle`)
-  console.log(`  POST http://localhost:${PORT}/atomic/verify`)
-  console.log(`  POST http://localhost:${PORT}/atomic/settle`)
+  console.log(`  POST http://localhost:${PORT}/verify (SVM/EVM)`)
+  console.log(`  POST http://localhost:${PORT}/settle (SVM/EVM)`)
+  console.log(`  POST http://localhost:${PORT}/atomic/verify (SVM/EVM)`)
+  console.log(`  POST http://localhost:${PORT}/atomic/settle (SVM/EVM)`)
   console.log(`  GET  http://localhost:${PORT}/health`)
 })

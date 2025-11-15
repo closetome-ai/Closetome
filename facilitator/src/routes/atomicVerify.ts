@@ -1,10 +1,12 @@
 import { Request, Response } from 'express'
-import { AtomicVerifyRequest, AtomicVerifyResponse } from '../types'
+import { AtomicVerifyRequest, AtomicVerifyResponse, isEVMAtomicPayload } from '../types'
 import { SolanaService } from '../services/solanaService'
+import { EVMService } from '../services/evmService'
 
 // Initialize services
 const solanaMainnetService = new SolanaService('https://api.mainnet-beta.solana.com')
 const solanaDevnetService = new SolanaService('https://api.devnet.solana.com')
+const evmService = new EVMService()
 
 /**
  * POST /atomic/verify
@@ -32,43 +34,60 @@ export const verifyAtomicPayment = async (req: Request, res: Response): Promise<
       return
     }
 
-    // Validate callback instructions exist
-    if (!verifyRequest.paymentRequirements.extra?.callbackInstructions) {
+    const { paymentRequirements, paymentPayload } = verifyRequest
+    const network = paymentRequirements.network
+
+    // Determine chain type
+    const isSVM = network === 'solana' || network === 'solana-devnet'
+    const isEVM = network === 'base' || network === 'base-sepolia'
+
+    if (!isSVM && !isEVM) {
       res.status(400).json({
         isValid: false,
-        error: 'No callback instructions provided for atomic transaction'
+        error: `Unsupported network: ${network}`
       } as AtomicVerifyResponse)
       return
     }
 
-    const { paymentRequirements, paymentPayload } = verifyRequest
-    let isValid = false
+    let verifyResult: { isValid: boolean; error?: string; feeAmount?: string }
 
-    // Route to appropriate service based on network
-    switch (paymentRequirements.network) {
-      case 'solana':
-        isValid = await solanaMainnetService.verifyAtomicPayment(paymentPayload, paymentRequirements)
-        break
-      case 'solana-devnet':
-        isValid = await solanaDevnetService.verifyAtomicPayment(paymentPayload, paymentRequirements)
-        break
-      case 'base':
-      case 'base-sepolia':
+    // Route to appropriate service based on network type
+    if (isSVM) {
+      // Solana atomic: validate callback instructions exist
+      if (!paymentRequirements.extra?.callbackInstructions) {
         res.status(400).json({
           isValid: false,
-          error: 'Atomic transactions not yet supported for EVM networks'
+          error: 'No callback instructions provided for atomic transaction'
         } as AtomicVerifyResponse)
         return
-      default:
+      }
+
+      let isValid = false
+      switch (network) {
+        case 'solana':
+          isValid = await solanaMainnetService.verifyAtomicPayment(paymentPayload, paymentRequirements)
+          break
+        case 'solana-devnet':
+          isValid = await solanaDevnetService.verifyAtomicPayment(paymentPayload, paymentRequirements)
+          break
+      }
+      verifyResult = { isValid }
+    } else {
+      // EVM atomic: validate and verify payment payload
+      if (!isEVMAtomicPayload(paymentPayload)) {
         res.status(400).json({
           isValid: false,
-          error: `Unsupported network: ${paymentRequirements.network}`
+          error: 'Invalid EVM atomic payment payload structure'
         } as AtomicVerifyResponse)
         return
+      }
+
+      verifyResult = await evmService.verifyAtomicPayment(paymentPayload)
     }
 
     const response: AtomicVerifyResponse = {
-      isValid
+      isValid: verifyResult.isValid,
+      error: verifyResult.error
     }
 
     res.status(200).json(response)

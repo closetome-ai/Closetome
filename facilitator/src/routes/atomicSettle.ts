@@ -1,10 +1,12 @@
 import { Request, Response } from 'express'
-import { AtomicSettleRequest, AtomicSettleResponse } from '../types'
+import { AtomicSettleRequest, AtomicSettleResponse, isEVMAtomicPayload } from '../types'
 import { SolanaService } from '../services/solanaService'
+import { EVMService } from '../services/evmService'
 
 // Initialize services
 const solanaMainnetService = new SolanaService('https://api.mainnet-beta.solana.com')
 const solanaDevnetService = new SolanaService('https://api.devnet.solana.com')
+const evmService = new EVMService()
 
 /**
  * POST /atomic/settle
@@ -32,39 +34,55 @@ export const settleAtomicPayment = async (req: Request, res: Response): Promise<
       return
     }
 
-    // Validate callback instructions exist
-    if (!settleRequest.paymentRequirements.extra?.callbackInstructions) {
+    const { paymentRequirements, paymentPayload } = settleRequest
+    const network = paymentRequirements.network
+
+    // Determine chain type
+    const isSVM = network === 'solana' || network === 'solana-devnet'
+    const isEVM = network === 'base' || network === 'base-sepolia'
+
+    if (!isSVM && !isEVM) {
       res.status(400).json({
         success: false,
-        error: 'No callback instructions provided for atomic transaction'
+        error: `Unsupported network: ${network}`
       } as AtomicSettleResponse)
       return
     }
 
-    const { paymentRequirements, paymentPayload } = settleRequest
     let result: { success: boolean; transactionHash?: string; error?: string }
 
-    // Route to appropriate service based on network
-    switch (paymentRequirements.network) {
-      case 'solana':
-        result = await solanaMainnetService.settleAtomicPayment(paymentPayload, paymentRequirements)
-        break
-      case 'solana-devnet':
-        result = await solanaDevnetService.settleAtomicPayment(paymentPayload, paymentRequirements)
-        break
-      case 'base':
-      case 'base-sepolia':
+    // Route to appropriate service based on network type
+    if (isSVM) {
+      // Solana atomic: validate callback instructions exist
+      if (!settleRequest.paymentRequirements.extra?.callbackInstructions) {
         res.status(400).json({
           success: false,
-          error: 'Atomic transactions not yet supported for EVM networks'
+          error: 'No callback instructions provided for atomic transaction'
         } as AtomicSettleResponse)
         return
-      default:
+      }
+
+      switch (network) {
+        case 'solana':
+          result = await solanaMainnetService.settleAtomicPayment(paymentPayload, paymentRequirements)
+          break
+        case 'solana-devnet':
+          result = await solanaDevnetService.settleAtomicPayment(paymentPayload, paymentRequirements)
+          break
+        default:
+          result = { success: false, error: `Unsupported SVM network: ${network}` }
+      }
+    } else {
+      // EVM atomic: validate and settle payment
+      if (!isEVMAtomicPayload(paymentPayload)) {
         res.status(400).json({
           success: false,
-          error: `Unsupported network: ${paymentRequirements.network}`
+          error: 'Invalid EVM atomic payment payload structure'
         } as AtomicSettleResponse)
         return
+      }
+
+      result = await evmService.settleAtomicPayment(paymentPayload)
     }
 
     const response: AtomicSettleResponse = {

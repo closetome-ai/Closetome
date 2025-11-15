@@ -14,6 +14,10 @@ export {
   deserializeInstructions
 } from './utils'
 
+// EVM utilities
+export { evmTransactionBuilder } from './evm-utils'
+export type { EVMTransactionBuilder } from './evm-utils'
+
 // Schema builder
 export { SchemaBuilder } from './schema'
 

@@ -1,10 +1,10 @@
 import { Keypair } from '@solana/web3.js'
 import { X402Client } from '../../solana-sdk/src'
 import * as bs58 from 'bs58'
-import * as dotenv from 'dotenv'
-import * as path from 'path'
+import { config } from 'dotenv'
+import path from 'path'
 
-dotenv.config({
+config({
   path: path.join(__dirname, '.env'),
 })
 

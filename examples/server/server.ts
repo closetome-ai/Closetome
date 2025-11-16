@@ -34,9 +34,12 @@ import {
   TransactionInstruction
 } from '@solana/web3.js'
 import bs58 from 'bs58'
-import dotenv from 'dotenv'
+import { config } from 'dotenv'
+import path from 'path'
 
-dotenv.config()
+config({
+  path: path.join(__dirname, '../.env'),
+})
 
 const app = express()
 app.use(express.json())

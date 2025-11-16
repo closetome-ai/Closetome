@@ -2,6 +2,7 @@ import { X402Client } from '../../solana-sdk/src'
 import { ethers } from 'ethers'
 import * as readline from 'readline'
 import { config } from 'dotenv'
+import path from 'path'
 
 // =============================================================================
 // BASE CHAIN X402 CLIENT EXAMPLE
@@ -12,7 +13,9 @@ import { config } from 'dotenv'
 // Make sure you have test USDC on Base Sepolia
 // =============================================================================
 
-config()
+config({
+  path: path.join(__dirname, '../.env'),
+})
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout

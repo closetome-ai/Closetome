@@ -1,6 +1,7 @@
 import express from 'express'
 import type { Request, Response } from 'express'
 import { config } from 'dotenv'
+import path from 'path'
 import {
   createX402Middleware,
   defineRoute,
@@ -21,7 +22,9 @@ import { ethers } from 'ethers'
 // For production, change network to 'base' and use mainnet addresses
 // =============================================================================
 
-config()
+config({
+  path: path.join(__dirname, '../.env'),
+})
 const app = express()
 app.use(express.json())
 

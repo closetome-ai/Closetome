@@ -1,4 +1,4 @@
-import { X402Client } from '../../solana-sdk/src'
+import { X402Client } from '../../sdk/src'
 import { ethers } from 'ethers'
 import * as readline from 'readline'
 import { config } from 'dotenv'

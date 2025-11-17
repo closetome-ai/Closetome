@@ -27,7 +27,7 @@ import {
   createTypedHandlers,
   prop,
   serializeInstructions
-} from '../../solana-sdk/src'
+} from '../../sdk/src'
 import {
   Keypair,
   PublicKey,

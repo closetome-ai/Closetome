@@ -10,7 +10,7 @@ import {
   type EVMCallbackData,
   type CallbackTransaction,
   type EVMPaymentPayload
-} from '../../solana-sdk/src'
+} from '../../sdk/src'
 import { ethers } from 'ethers'
 
 // =============================================================================

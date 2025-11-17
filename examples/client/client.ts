@@ -1,5 +1,5 @@
 import { Keypair } from '@solana/web3.js'
-import { X402Client } from '../../solana-sdk/src'
+import { X402Client } from '../../sdk/src'
 import * as bs58 from 'bs58'
 import { config } from 'dotenv'
 import path from 'path'

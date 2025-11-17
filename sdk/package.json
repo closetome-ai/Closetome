@@ -1,6 +1,10 @@
 {
   "name": "@closetome/x402-sdk",
-  "version": "0.2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/closetome-ai/Closetome",
+  "version": "0.2.1",
   "description": "Multi-chain X402 payment SDK supporting Solana (SVM) and EVM chains (Base, Ethereum, BSC) for both server and client applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -18,8 +22,6 @@
     "solana",
     "base",
     "ethereum",
-    "bsc",
-    "evm",
     "svm",
     "usdc",
     "multi-chain"

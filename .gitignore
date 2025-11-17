@@ -38,3 +38,6 @@ coverage/
 # Misc
 .cache/
 .temp/
+
+# SDK
+sdk/package/

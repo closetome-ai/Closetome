@@ -4,12 +4,12 @@
     "access": "public"
   },
   "homepage": "https://github.com/closetome-ai/Closetome",
-  "version": "0.2.1",
+  "version": "0.2.5",
   "description": "Multi-chain X402 payment SDK supporting Solana (SVM) and EVM chains (Base, Ethereum, BSC) for both server and client applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --project tsconfig.build.json",
     "dev": "nodemon --exec ts-node src/index.ts",
     "example": "nodemon --exec ts-node examples/basic-server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -38,9 +38,10 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.5",
-    "@types/node": "^24.10.0",
+    "@types/node": "^22.7.5",
+    "@types/ws": "^8.18.1",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.0.4"
   }
 }

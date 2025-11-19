@@ -26,7 +26,7 @@ import * as fs from 'fs'
 
 // Load EVM proxy ABI
 const evmProxyABI = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '../../facilitator/src/evmProxy.json'), 'utf-8')
+  fs.readFileSync(path.join(__dirname, '../public/evmProxy.json'), 'utf-8')
 )
 
 export class X402Middleware {

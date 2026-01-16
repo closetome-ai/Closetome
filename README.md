@@ -262,3 +262,7 @@ MIT
 ---
 
 **Need help?** Check out the [examples](./examples/) directory for complete working implementations of both Standard and Atomic payment flows.
+
+## Acknowledgments
+
+- Thanks to [Community Token](https://bags.fm/J4YJzDajwFjPkUmESE1KtTT8iLu3vgbBvoizFz3RBAGS) for donation

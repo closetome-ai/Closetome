@@ -9,7 +9,7 @@ import { createATAInstruction } from '../utils/solana.js'
 import { struct } from '@solana/buffer-layout'
 import { bool, publicKey, u64 } from '@solana/buffer-layout-utils'
 import type { BuyTokenParams, SellTokenParams } from './types.js'
-import PUMPFUN_IDL from './pumpfun.idl.json' assert { type: 'json' }
+import PUMPFUN_IDL from './pumpfun.idl.json' with { type: 'json' }
 
 export const PUMPFUN_PROGRAM_ID = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P')
 

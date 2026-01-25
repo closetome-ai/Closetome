@@ -15,7 +15,7 @@ import { struct, u16, u8 } from '@solana/buffer-layout'
 import { publicKey, u64 } from '@solana/buffer-layout-utils'
 import type { BuyTokenParams, SellTokenParams } from './types.js'
 import { PUMPFUN_PROGRAM_ID } from './pumpfun.js'
-import PUMPAMM_IDL from './pumpamm.idl.json' assert { type: 'json' }
+import PUMPAMM_IDL from './pumpamm.idl.json' with { type: 'json' }
 
 export const PUMPAMM_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA')
 
